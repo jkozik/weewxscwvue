@@ -5,6 +5,8 @@ data/weewx.conf.*
 !data/weewx.conf.example
 data/archive/
 data/public_html/
+# Generated WeeWX-Saratoga output (FTP'd to new.sancapweather.com)
+data/saratoga_html/
 data/bin/user/__pycache__/
 data/bin/user/installer/
 data/examples/

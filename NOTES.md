@@ -344,10 +344,58 @@ Home Assistant on **osprey** (192.168.0.28, Florida LAN; Home Assistant
   plain-text copy of the bridge password, so a restore doesn't require
   re-keying osprey.
 
+## 2026-11-22: Saratoga feed for new.sancapweather.com (branch `saratoga`)
+
+Goal: the same weewx-saratoga → FTP → Saratoga templates setup that
+weewxrtlsdr uses for napervilleweather.com, for a new site
+new.sancapweather.com. The old sancapweather.com (Cumulus, 22222 Envoy,
+`sancap/` folder, `ftp-sancap` server) stays untouched.
+
+- **FTP server:** the ftp-weather repo on 192.168.100.208 runs one vsftpd
+  deployment per station on the Kubernetes cluster, all on one NFS
+  volume (`192.168.100.153:/home/nfs/weather-stations`, `subPath` per
+  station). So no new NFS export was needed. Added `ftp-sancapweewx`
+  (user `sancapweewx`, secret key `sancapweewx-password`, same naming as the
+  others), NodePorts 30520/30521 and PASV 31500–31510 (next free block).
+  Upload/list/delete tested from this VM.
+- **weewx-saratoga** 0.1.11: copied the 8 Python files and the WEEWXtags,
+  Clientraw and SteelSeriesGauge skins from weewxrtlsdr instead of running
+  the installer, so the WeeWX 5.5 `stackedwindrose.py` fix comes along.
+  `six` added to the Dockerfile (rtcr.py imports it).
+- **Kept separate from weewx.sancapweather.com:** all Saratoga output goes
+  to `data/saratoga_html` (`rtcr_path = ../saratoga_html` for clientraw.txt),
+  and `[[FTP]] HTML_ROOT = saratoga_html`. weewxrtlsdr instead FTPs all of
+  `public_html`, where WEEWXtags and Seasons write graphs with the same
+  names. Because Seasons' NOAA files are no longer in the upload, a small
+  local skin `SaratogaNOAA` generates just those (stock templates).
+- Dry run first: new image with `--network none` on a copy of `data/`
+  (`weectl report run` for the four reports). Everything generated except
+  `WEEWXtags.php` and `clientrawextra.txt`: `$alltime` on the empty
+  `weewxwd.sdb` gives `firstGoodStamp() = None`. One record in the copy
+  fixed it, and live it fixed itself at the first archive record.
+  `weewxwd.sdb` is not backfilled (weewxrtlsdr's also starts at its
+  install date).
+- Live 2026-11-22 00:54 EST, one restart. Backups:
+  `~/cumulus-import-scw/backup/weewx.sdb.pre-saratoga-20261122`,
+  `data/weewx.conf.pre-saratoga`, image `weewxscw-weewx:pre-saratoga`. First
+  archive cycle 01:00 EST: all reports generated, `Ftp'd 63 files in
+  0.63 seconds`, files present in `sancapweewx/public_html` on the NFS
+  share, clientraw.txt rewritten every 15 s, no errors, Seasons unchanged.
+- Limitation: the site's data is up to 15 minutes old (Envoy archive
+  interval). Realtime later via `remote_server_url` (HTTP POST of
+  clientraw.txt to the Saratoga site).
+- Back out: copy `data/weewx.conf.pre-saratoga` to `data/weewx.conf`,
+  `docker tag weewxscw-weewx:pre-saratoga weewxscw-weewx:latest`,
+  `docker compose up -d --no-build weewx`.
+
 ## Still to do
 
 - Watch weewxscw for a few days, then retire Cumulus and the Windows VM
   (.173). The 22222 Envoy can then be repurposed.
 - osprey: Home Assistant sensors and the Tab5 (osprey project).
 - The M5Stick + ENV III box (UV and solar) will publish to the osprey
-  Mosquitto broker (osprey project).
+  Mosquitto broker (osprey project). Later: feed it into this weewx too
+  (MQTTSubscribe, like weewxrtlsdr's indoor sensor).
+- Build the new.sancapweather.com Saratoga site on its own host, reading
+  `sancapweewx/public_html`; then consider `remote_server_url` for realtime.
+- Commit the ftp-weather changes on .208.

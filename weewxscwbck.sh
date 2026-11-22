@@ -36,7 +36,8 @@ mkdir -p ${BCKDIR}/secrets && chmod 700 ${BCKDIR}/secrets
 install -m 600 /home/jkozik/secrets/weewxscw-mqtt.txt ${BCKDIR}/secrets/ \
   || echo "WARNING: ~/secrets/weewxscw-mqtt.txt not copied"
 
-for DB in weewx.sdb; do
+# weewxwd.sdb = WeeWX-Saratoga extra observations (created by WsArchive)
+for DB in weewx.sdb weewxwd.sdb; do
   python3 - "${PROJ}/data/archive/${DB}" "${BCKDIR}/db/${DB}" <<'EOF' || { echo "db snapshot of ${DB} FAILED"; exit 1; }
 import sqlite3, sys
 src = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True)

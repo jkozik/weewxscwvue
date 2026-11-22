@@ -16,7 +16,11 @@ Vantage Vue ISS ──radio, ch 1──▶ Davis Envoy ──▶ WiFiLogger (TCP
                                   │      │ data/archive/weewx.sdb (SQLite)  │
                                   │      ▼ data/public_html (Seasons skin)  │
                                   │ nginx-scw   :8090 ──▶ Cloudflare Tunnel │
-                                  └─────────────────────────────────────────┘
+                                  │      ▼ data/saratoga_html ──FTP──┐      │
+                                  └──────────────────────────────────┼──────┘
+                       ftp-sancapweewx (k8s on .208:30521) ◀─────────┘
+                         ──▶ NFS 192.168.100.153:/home/nfs/weather-stations/
+                             sancapweewx/public_html ──▶ new.sancapweather.com
 ```
 
 - weewx polls the Envoy over the internet through the WiFiLogger. It reads
@@ -30,6 +34,14 @@ Vantage Vue ISS ──radio, ch 1──▶ Davis Envoy ──▶ WiFiLogger (TCP
 - Live readings are also published over **MQTT** (`weather/scw/loop`, JSON,
   every 10 s) to the `mosquitto-scw` broker. The Florida broker on osprey
   bridges them over Tailscale for Home Assistant.
+- **Saratoga feed:** the [weewx-saratoga](https://github.com/ktrue/weewx-saratoga)
+  extension and three extra skins write `clientraw*.txt`, `WEEWXtags.php`,
+  `gauge-data.txt`, graphs and NOAA reports to **`data/saratoga_html/`**
+  (not `public_html`). The weewx FTP report uploads only that folder to the
+  `ftp-sancapweewx` server, for a Saratoga-templates site
+  (new.sancapweather.com, built separately). Same setup as weewxrtlsdr →
+  napervilleweather.com. The current sancapweather.com (Cumulus on the
+  22222 Envoy, `sancap/` folder) is separate and untouched.
 - The Vue has no solar or UV sensors.
 
 `NOTES.md` is the log of how this was built and what went wrong along the way.
@@ -43,14 +55,16 @@ Vantage Vue ISS ──radio, ch 1──▶ Davis Envoy ──▶ WiFiLogger (TCP
 | `mosquitto/` | broker config, tracked `acl`, and `setup.sh`, which installs the private acl/passwd copies |
 | `data/weewx.conf.example` | weewx config template (tracked). Copy it to `data/weewx.conf`, which is git-ignored |
 | `data/skins/`, `data/bin/` | stock skins and weewx's user directory, as created by `weectl station create` |
+| `data/bin/user/{rtcr,ws*,stackedwindrose}.py`, `data/skins/{WEEWXtags,Clientraw,SteelSeriesGauge}` | weewx-saratoga 0.1.11 and the SteelSeries gauge template, copied from weewxrtlsdr (no installer run). `stackedwindrose.py` has a LOCAL CHANGE for WeeWX 5.5 (`stop_event`) |
+| `data/skins/SaratogaNOAA` | local skin: only the NOAA monthly/yearly reports (stock Seasons templates) for the Saratoga site |
 | `weewxscwbck.sh` | weekly backup (cron) |
 | `zabbix/` | Zabbix agent UserParameters and scripts (site freshness, archive age, outdoor data, reception, container health, backup age) |
 | `cumulus-import/` | one-off Cumulus history import: cleanup, import config, verification |
 
 ## Secrets
 
-`data/weewx.conf` holds the station's DDNS host name and port, and any
-passwords added later. It is git-ignored. `data/weewx.conf.example` is the
+`data/weewx.conf` holds the station's DDNS host name and port, the MQTT
+password and the FTP password (`[StdReport] [[FTP]]`). It is git-ignored. `data/weewx.conf.example` is the
 same file with `replace_me` placeholders. When you change the config, copy
 non-secret changes into the example as well.
 
@@ -71,6 +85,7 @@ Clone it there, or edit those paths.
    cp data/weewx.conf.example data/weewx.conf
    # edit data/weewx.conf, section [Vantage]:
    #   host = <ddns name or IP>     tcp_port = <port>
+   # and [StdReport] [[FTP]] password = <ftp-sancapweewx password>
    ```
    Set `[Station]` (location, latitude, longitude, altitude) if this is a
    different station.
@@ -79,8 +94,8 @@ Clone it there, or edit those paths.
    If Docker creates it first for nginx's mount, it is owned by root, and
    weewx can't write the pages:
    ```bash
-   mkdir -p data/public_html data/archive
-   sudo chown 1000:1000 data/public_html data/archive   # skip if you are uid 1000
+   mkdir -p data/public_html data/saratoga_html data/archive
+   sudo chown 1000:1000 data/public_html data/saratoga_html data/archive   # skip if you are uid 1000
    ```
 
 3. Check that the Envoy listens on the same channel as the outdoor unit
@@ -114,20 +129,30 @@ Clone it there, or edit those paths.
    ```
    In the Tailscale admin console, **disable key expiry** for this machine.
 
-6. Start:
+6. FTP destination for the Saratoga feed: the `ftp-sancapweewx` server
+   must be running on the Kubernetes cluster (repo
+   [ftp-weather](https://github.com/jkozik/ftp-weather) on 192.168.100.208:
+   `kubectl apply -f ftp-sancapweewx-svc-dep.yaml`, password key
+   `sancapweewx-password` in `ftp-secrets.yaml`). Test it from this VM:
+   ```bash
+   echo test > /tmp/t.txt && curl -T /tmp/t.txt "ftp://sancapweewx:<password>@192.168.100.208:30521/t.txt"
+   ```
+   Without it weewx still runs; only the FTP step logs errors.
+
+7. Start:
    ```bash
    docker compose up -d
    ```
    On first start, weewx downloads the Envoy's stored archive before it
    starts the live loop. **Don't restart it during that download.**
 
-7. Point things at this machine:
+8. Point things at this machine:
    - **Cloudflare Tunnel:** `weewx.sancapweather.com` → `<this VM's LAN IP>:8090`.
    - **osprey's Mosquitto bridge:** `address <this VM's tailscale ip -4>:1884`,
      login `osprey-bridge`.
    - Or just a browser at `http://<host>:8090/`.
 
-8. Optional: install the weekly backup in root's crontab (Sunday 23:45):
+9. Optional: install the weekly backup in root's crontab (Sunday 23:45):
    ```
    45 23 * * 0 /home/jkozik/projects/weewxscw/weewxscwbck.sh >> /home/jkozik/projects/weewxscw/weewxscwbck.log 2>&1
    ```
@@ -136,10 +161,10 @@ Clone it there, or edit those paths.
    from `~/.ncftp-backup.cfg`), and keeps 84 days of tarballs. The tarball
    holds `weewxscwBck/project/` (the whole repo folder, including the live
    `data/weewx.conf` and the broker's private files, but not the database),
-   `weewxscwBck/db/weewx.sdb` and `weewxscwBck/secrets/weewxscw-mqtt.txt`.
+   `weewxscwBck/db/weewx.sdb`, `weewxscwBck/db/weewxwd.sdb` (weewx-saratoga) and `weewxscwBck/secrets/weewxscw-mqtt.txt`.
    **It contains secrets; keep it private.**
 
-9. Optional: Zabbix monitoring (see "Monitoring" below).
+10. Optional: Zabbix monitoring (see "Monitoring" below).
 
 ## Verify it's working
 
@@ -163,6 +188,10 @@ curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8090/    # expect 200
 # 6. MQTT: a live JSON message (retained, so it appears at once), as the bridge sees it
 docker run --rm --network host eclipse-mosquitto:2.1.2-alpine mosquitto_sub \
   -h "$(tailscale ip -4)" -p 1884 -u osprey-bridge -P '<password>' -t 'weather/scw/#' -v -C 1
+
+# 7. Saratoga feed: clientraw.txt rewritten every ~15 s, FTP after each archive record
+ls -l --time-style=+%T data/saratoga_html/clientraw.txt
+docker logs --since 20m weewx-scw 2>&1 | grep ftpgenerator      # "Ftp'd NN files"
 ```
 
 ## Monitoring (Zabbix)
@@ -211,12 +240,24 @@ numbers:
   VM's own LAN**, and accepting it could send local traffic (pfSense,
   Zabbix, the backup FTP server) through the tailnet. The MQTT bridge
   needs only the 100.x addresses.
+- **The Saratoga site updates every 15 minutes.** FTP runs after each
+  archive record, and the Envoy's archive interval is 15 minutes, so the
+  uploaded `clientraw.txt` is up to 15 minutes old even though weewx
+  rewrites it locally every 15 s. For true realtime, set
+  `[WeewxSaratoga] [[RealtimeClientraw]] remote_server_url` to the Saratoga
+  site's `post_clientraw.php` once that site exists.
+- **weewx-saratoga's `weewxwd.sdb` starts empty** on a fresh install (it
+  isn't backfilled from `weewx.sdb`). Until the first archive record after
+  start, `WEEWXtags.php` and `clientrawextra.txt` fail with a `TypeError`
+  in `alltime`; that clears by itself. On a restore, restore it with
+  `weewx.sdb`.
 - Logs go to `docker logs weewx-scw` (stdout), capped at 30 MB.
 
 ## Back out
 
 `docker compose down`. Nothing outside this directory is touched, except
-the items you installed yourself: the backup cron line, the Zabbix agent
+the items you installed yourself: the `ftp-sancapweewx` server on the
+cluster, the backup cron line, the Zabbix agent
 files, Tailscale, and `~/secrets/weewxscw-mqtt.txt`. The images
 `weewxscw-weewx`, `nginx:1.27-alpine` and `eclipse-mosquitto:2.1.2-alpine`
 can be removed afterwards.

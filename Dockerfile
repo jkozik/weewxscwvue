@@ -13,4 +13,8 @@ RUN echo America/New_York > /etc/timezone \
 # points PIP_TARGET/PYTHONPATH at the bind-mounted /data, which would hide a
 # build-time install, so install into the venv itself (same as weewxrtlsdr).
 RUN env -u PIP_TARGET -u PYTHONPATH /opt/venv/bin/pip install --no-cache-dir paho-mqtt==1.6.1
+# WeeWX-Saratoga's rtcr.py (realtime clientraw.txt for new.sancapweather.com)
+# still imports the Python 2/3 compat shim `six`, not present in this image's
+# venv. Same PIP_TARGET/PYTHONPATH override as above (as in weewxrtlsdr).
+RUN env -u PIP_TARGET -u PYTHONPATH /opt/venv/bin/pip install --no-cache-dir six
 USER weewx

@@ -309,30 +309,77 @@ version = 5.5.2
         skin = Standard
         enable = false
     
+    ####
+    # WeeWX-Saratoga feed for new.sancapweather.com (Saratoga templates).
+    # Everything for that site goes to data/saratoga_html, NOT public_html,
+    # so weewx.sancapweather.com (Seasons, public_html) stays separate and
+    # only Saratoga files are FTP'd. Copied from weewxrtlsdr's setup.
+    [[WEEWXtagsReport]]
+        HTML_ROOT = saratoga_html
+        skin = WEEWXtags
+        enable = True
+        [[[Units]]]
+            [[[[StringFormats]]]]
+                NONE = --
+            [[[[TimeFormats]]]]
+                date_f = %d/%m/%Y
+                date_time_f = %d/%m/%Y %H:%M
+    
+    [[ClientrawReport]]
+        HTML_ROOT = saratoga_html
+        skin = Clientraw
+        enable = True
+        [[[Units]]]
+            [[[[StringFormats]]]]
+                degree_C = %.1f
+                degree_compass = %.0f
+                foot = %.0f
+                hPa = %.1f
+                km = %.1f
+                knot = %.1f
+                mm = %.1f
+                percent = %.0f
+                uv_index = %.1f
+                watt_per_meter_squared = %.0f
+                NONE = --
+    
+    [[GaugeDataReport]]
+        # gauge-data.txt for the Saratoga site's SteelSeries gauges page.
+        HTML_ROOT = saratoga_html
+        skin = SteelSeriesGauge
+        enable = true
+    
+    [[SaratogaNOAAReport]]
+        # NOAA monthly/yearly summaries into saratoga_html/NOAA (local skin).
+        HTML_ROOT = saratoga_html
+        skin = SaratogaNOAA
+        enable = true
+    
     [[FTP]]
-        # FTP'ing the results to a webserver is treated as just another report,
-        # albeit one with an unusual report generator!
+        # Uploads data/saratoga_html (only) to the ftp-sancapweewx server on
+        # the .208 Kubernetes cluster (github.com/jkozik/ftp-weather), which
+        # stores it on NFS at 192.168.100.153:
+        # /home/nfs/weather-stations/sancapweewx/public_html
         skin = Ftp
         
         # If you wish to use FTP, set "enable" to "true", then fill out the
         # next four lines.
         # Use quotes around the password to guard against parsing errors.
-        enable = false
-        user = replace_me
+        enable = true
+        user = sancapweewx
         password = replace_me
-        server = replace_me    # The ftp server name, e.g, www.myserver.org
-        path = replace_me    # The destination directory, e.g., /weather
+        server = 192.168.100.208
+        path = /public_html
         
         # Set to True for an FTP over TLS (FTPS) connection. Not all servers
         # support this.
         secure_ftp = False
         
-        # To upload files from something other than what HTML_ROOT is set
-        # to above, specify a different HTML_ROOT here.
-        #HTML_ROOT = public_html
+        # Upload the Saratoga folder only, not public_html.
+        HTML_ROOT = saratoga_html
         
-        # Most FTP servers use port 21.
-        port = 21
+        # ftp-sancapweewx control port (NodePort); PASV ports 31500-31510.
+        port = 30521
         
         # Set to 1 to use passive mode, zero for active mode
         passive = 1
@@ -507,6 +554,9 @@ version = 5.5.2
         rainRate = prefer_hardware
         windchill = prefer_hardware
         windrun = prefer_hardware
+        # WeeWX-Saratoga
+        wet_bulb = prefer_hardware
+        abs_humidity = prefer_hardware, archive
 
 ##############################################################################
 
@@ -564,6 +614,13 @@ version = 5.5.2
         # The schema defines the structure of the database.
         # It is *only* used when the database is created.
         schema = weewx.schemas.wview_extended.schema
+    
+    # WeeWX-Saratoga extra observations (weewxwd.sdb)
+    [[ws_binding]]
+        database = ws_sqlite
+        table_name = archive
+        manager = weewx.manager.DaySummaryManager
+        schema = user.wsschema.ws_schema
 
 ##############################################################################
 
@@ -580,6 +637,14 @@ version = 5.5.2
     [[archive_mysql]]
         database_name = weewx
         database_type = MySQL
+    
+    # WeeWX-Saratoga
+    [[ws_sqlite]]
+        database_type = SQLite
+        database_name = weewxwd.sdb
+    [[ws_mysql]]
+        database_type = MySQL
+        database_name = weewxwd
 
 ##############################################################################
 
@@ -613,16 +678,55 @@ version = 5.5.2
     [[Services]]
         prep_services = weewx.engine.StdTimeSynch
         data_services = ,
-        process_services = weewx.engine.StdConvert, weewx.engine.StdCalibrate, weewx.engine.StdQC, weewx.wxservices.StdWXCalculate
-        xtype_services = weewx.wxxtypes.StdWXXTypes, weewx.wxxtypes.StdPressureCooker, weewx.wxxtypes.StdRainRater, weewx.wxxtypes.StdDelta
-        archive_services = weewx.engine.StdArchive
+        process_services = weewx.engine.StdConvert, weewx.engine.StdCalibrate, weewx.engine.StdQC, weewx.wxservices.StdWXCalculate, user.ws.WsWXCalculate
+        xtype_services = weewx.wxxtypes.StdWXXTypes, weewx.wxxtypes.StdPressureCooker, weewx.wxxtypes.StdRainRater, weewx.wxxtypes.StdDelta, user.wsxtypes.StdWSXTypes
+        archive_services = weewx.engine.StdArchive, user.ws.WsArchive
         restful_services = weewx.restx.StdStationRegistry, weewx.restx.StdWunderground, weewx.restx.StdPWSweather, weewx.restx.StdCWOP, weewx.restx.StdWOW, weewx.restx.StdWOWBE, weewx.restx.StdAWEKAS, user.mqtt.MQTT
-        report_services = weewx.engine.StdPrint, weewx.engine.StdReport
+        report_services = weewx.engine.StdPrint, weewx.engine.StdReport, user.rtcr.RealtimeClientraw
 
 ##############################################################################
 
 # LOCAL CHANGE: log to stdout (docker logs) instead of syslog; the container
 # has no /dev/log. Same as weewxrtlsdr.
+[WeewxSaratoga]
+    # WeewxSaratoga database binding
+    data_binding = ws_binding
+    
+    # radiation (solar insolation) level above which the sun is considered
+    # shining
+    sunshine_threshold = 120
+    
+    [[RealtimeClientraw]]
+        # clientraw.txt goes to saratoga_html with the rest of the Saratoga
+        # files (path is relative to [StdReport] HTML_ROOT = public_html).
+        rtcr_path = ../saratoga_html
+        
+        # If using an external website, configure remote_server_url to point to
+        # the post_clientraw.php script on your website like:
+        #   remote_server_url = http://your.website.com/post_clientraw.php
+        # remote_server_url = http://your.website.com/post_clientraw.php
+        
+        # Minimum clientraw.txt generation interval, seconds (same as
+        # weewxrtlsdr).
+        min_interval = 15
+        
+        # Same date/time formats as weewxrtlsdr (day/month/year, 24 h).
+        date_format = %-d/%-m/%Y
+        long_time_format = %H:%M:%S
+        short_time_format = %H:%M
+
+##############################################################################
+
+[Accumulator]
+    # Start WeeWX-Saratoga extractors
+    [[forecastRule]]
+        extractor = last
+    [[forecastText]]
+        accumulator = firstlast
+        extractor = last
+
+##############################################################################
+
 [Logging]
     [[root]]
         level = INFO
