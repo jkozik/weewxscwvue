@@ -18,9 +18,9 @@ Vantage Vue ISS ──radio, ch 1──▶ Davis Envoy ──▶ WiFiLogger (TCP
                                   │ nginx-scw   :8090 ──▶ Cloudflare Tunnel │
                                   │      ▼ data/saratoga_html ──FTP──┐      │
                                   └──────────────────────────────────┼──────┘
-                       ftp-sancapweewx (k8s on .208:30521) ◀─────────┘
+                       ftp-sancapvueweewx (k8s on .208:30521) ◀──────┘
                          ──▶ NFS 192.168.100.153:/home/nfs/weather-stations/
-                             sancapweewx/public_html ──▶ new.sancapweather.com
+                             sancapvueweewx/public_html ──▶ new.sancapweather.com
 ```
 
 - weewx polls the Envoy over the internet through the WiFiLogger. It reads
@@ -38,7 +38,7 @@ Vantage Vue ISS ──radio, ch 1──▶ Davis Envoy ──▶ WiFiLogger (TCP
   extension and three extra skins write `clientraw*.txt`, `WEEWXtags.php`,
   `gauge-data.txt`, graphs and NOAA reports to **`data/saratoga_html/`**
   (not `public_html`). The weewx FTP report uploads only that folder to the
-  `ftp-sancapweewx` server, for a Saratoga-templates site
+  `ftp-sancapvueweewx` server, for a Saratoga-templates site
   (new.sancapweather.com, built separately). Same setup as weewxrtlsdr →
   napervilleweather.com. The current sancapweather.com (Cumulus on the
   22222 Envoy, `sancap/` folder) is separate and untouched.
@@ -85,7 +85,7 @@ Clone it there, or edit those paths.
    cp data/weewx.conf.example data/weewx.conf
    # edit data/weewx.conf, section [Vantage]:
    #   host = <ddns name or IP>     tcp_port = <port>
-   # and [StdReport] [[FTP]] password = <ftp-sancapweewx password>
+   # and [StdReport] [[FTP]] password = <ftp-sancapvueweewx password>
    ```
    Set `[Station]` (location, latitude, longitude, altitude) if this is a
    different station.
@@ -129,13 +129,13 @@ Clone it there, or edit those paths.
    ```
    In the Tailscale admin console, **disable key expiry** for this machine.
 
-6. FTP destination for the Saratoga feed: the `ftp-sancapweewx` server
+6. FTP destination for the Saratoga feed: the `ftp-sancapvueweewx` server
    must be running on the Kubernetes cluster (repo
    [ftp-weather](https://github.com/jkozik/ftp-weather) on 192.168.100.208:
-   `kubectl apply -f ftp-sancapweewx-svc-dep.yaml`, password key
-   `sancapweewx-password` in `ftp-secrets.yaml`). Test it from this VM:
+   `kubectl apply -f ftp-sancapvueweewx-svc-dep.yaml`, password key
+   `sancapvueweewx-password` in `ftp-secrets.yaml`). Test it from this VM:
    ```bash
-   echo test > /tmp/t.txt && curl -T /tmp/t.txt "ftp://sancapweewx:<password>@192.168.100.208:30521/t.txt"
+   echo test > /tmp/t.txt && curl -T /tmp/t.txt "ftp://sancapvueweewx:<password>@192.168.100.208:30521/t.txt"
    ```
    Without it weewx still runs; only the FTP step logs errors.
 
@@ -256,7 +256,7 @@ numbers:
 ## Back out
 
 `docker compose down`. Nothing outside this directory is touched, except
-the items you installed yourself: the `ftp-sancapweewx` server on the
+the items you installed yourself: the `ftp-sancapvueweewx` server on the
 cluster, the backup cron line, the Zabbix agent
 files, Tailscale, and `~/secrets/weewxscw-mqtt.txt`. The images
 `weewxscw-weewx`, `nginx:1.27-alpine` and `eclipse-mosquitto:2.1.2-alpine`

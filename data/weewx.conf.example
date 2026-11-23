@@ -356,17 +356,17 @@ version = 5.5.2
         enable = true
     
     [[FTP]]
-        # Uploads data/saratoga_html (only) to the ftp-sancapweewx server on
+        # Uploads data/saratoga_html (only) to the ftp-sancapvueweewx server on
         # the .208 Kubernetes cluster (github.com/jkozik/ftp-weather), which
         # stores it on NFS at 192.168.100.153:
-        # /home/nfs/weather-stations/sancapweewx/public_html
+        # /home/nfs/weather-stations/sancapvueweewx/public_html
         skin = Ftp
         
         # If you wish to use FTP, set "enable" to "true", then fill out the
         # next four lines.
         # Use quotes around the password to guard against parsing errors.
         enable = true
-        user = sancapweewx
+        user = sancapvueweewx
         password = replace_me
         server = 192.168.100.208
         path = /public_html
@@ -378,7 +378,7 @@ version = 5.5.2
         # Upload the Saratoga folder only, not public_html.
         HTML_ROOT = saratoga_html
         
-        # ftp-sancapweewx control port (NodePort); PASV ports 31500-31510.
+        # ftp-sancapvueweewx control port (NodePort); PASV ports 31500-31510.
         port = 30521
         
         # Set to 1 to use passive mode, zero for active mode

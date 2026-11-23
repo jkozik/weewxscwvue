@@ -384,6 +384,15 @@ new.sancapweather.com. The old sancapweather.com (Cumulus, 22222 Envoy,
 - Limitation: the site's data is up to 15 minutes old (Envoy archive
   interval). Realtime later via `remote_server_url` (HTTP POST of
   clientraw.txt to the Saratoga site).
+- 2026-11-23: renamed the FTP user, server and NFS folder from
+  `sancapweewx` to **`sancapvueweewx`** (there are two Sanibel stations, an
+  Ambient WS2000 and this Davis Vantage Vue; anything for the Vue gets
+  "vue" in its name). Deployment `ftp-sancapvueweewx`, secret key
+  `sancapvueweewx-password`, same ports. The folder was renamed on .153
+  with `mv`, which keeps the ftp (14:50) ownership; a folder Kubernetes
+  creates for a missing `subPath` is owned by root and not writable.
+  `saratoga_html/#FTP.last` was deleted so the first upload resent
+  everything (weewx otherwise uploads only files changed since then).
 - Back out: copy `data/weewx.conf.pre-saratoga` to `data/weewx.conf`,
   `docker tag weewxscw-weewx:pre-saratoga weewxscw-weewx:latest`,
   `docker compose up -d --no-build weewx`.
@@ -397,5 +406,5 @@ new.sancapweather.com. The old sancapweather.com (Cumulus, 22222 Envoy,
   Mosquitto broker (osprey project). Later: feed it into this weewx too
   (MQTTSubscribe, like weewxrtlsdr's indoor sensor).
 - Build the new.sancapweather.com Saratoga site on its own host, reading
-  `sancapweewx/public_html`; then consider `remote_server_url` for realtime.
+  `sancapvueweewx/public_html`; then consider `remote_server_url` for realtime.
 - Commit the ftp-weather changes on .208.
