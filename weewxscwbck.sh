@@ -5,7 +5,7 @@
 #
 # Runs as root (writes to /backup).
 # Root crontab entry (Sunday 23:45, after the weewx51 and weewxrtlsdr backups):
-#   45 23 * * 0 /home/jkozik/projects/weewxscw/weewxscwbck.sh >> /home/jkozik/projects/weewxscw/weewxscwbck.log 2>&1
+#   45 23 * * 0 /home/jkozik/projects/weewxscwvue/weewxscwbck.sh >> /home/jkozik/projects/weewxscwvue/weewxscwbck.log 2>&1
 #
 # No container shutdown needed: the SQLite database is copied with SQLite's
 # online backup API, which gives a consistent snapshot while weewxd writes.
@@ -16,7 +16,7 @@
 # file so the password isn't stored in this git repo. The backup itself
 # includes data/weewx.conf (git-ignored; DDNS host/port).
 
-PROJ=/home/jkozik/projects/weewxscw
+PROJ=/home/jkozik/projects/weewxscwvue
 BCKDIR=/backup/weewxscwBck
 FTPCFG=/home/jkozik/.ncftp-backup.cfg
 FTPDIR=/weewx

@@ -1,4 +1,4 @@
-# weewxscw — Davis Vantage Vue via Davis Envoy + WiFiLogger (TCP).
+# weewxscwvue — Davis Vantage Vue via Davis Envoy + WiFiLogger (TCP).
 # The Vantage driver is built into weewx, so nothing extra is needed; this
 # Dockerfile exists so the image is pinned in one place and can grow later
 # (extensions, pip packages) the same way weewxrtlsdr's does.

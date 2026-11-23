@@ -12,7 +12,7 @@ import sqlite3
 import sys
 import time
 
-DB = "/home/jkozik/projects/weewxscw/data/archive/weewx.sdb"
+DB = "/home/jkozik/projects/weewxscwvue/data/archive/weewx.sdb"
 what = sys.argv[1] if len(sys.argv) > 1 else "age"
 fallback = {"age": 999, "outtemp": 0, "rxcheck": -1}.get(what, -1)
 

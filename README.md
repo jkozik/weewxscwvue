@@ -1,4 +1,4 @@
-# weewxscw
+# weewxscwvue
 
 [WeeWX](https://weewx.com/) for a Davis **Vantage Vue** weather station in
 Sanibel/Captiva, Florida, served at
@@ -46,6 +46,15 @@ Vantage Vue ISS ──radio, ch 1──▶ Davis Envoy ──▶ WiFiLogger (TCP
 
 `NOTES.md` is the log of how this was built and what went wrong along the way.
 
+**Naming:** the repo and folder are `weewxscwvue` (two Sanibel stations: an
+Ambient WS2000 and this Davis Vantage Vue; Vue things get "vue" in the
+name). It was `weewxscw` until 2026-11-23, and these deliberately keep the
+old name: the Compose project, image and containers (`weewxscw`,
+`weewxscw-weewx`, `weewx-scw`, `nginx-scw`, `mosquitto-scw`), the Zabbix
+item keys (`weewxscw.*`), the backup script and tarballs (`weewxscwbck.sh`,
+`/backup/weewxscw.*`), `~/secrets/weewxscw-mqtt.txt` and the MQTT topic
+`weather/scw/loop`.
+
 ## Repository layout
 
 | Path | What |
@@ -74,14 +83,14 @@ Requirements: Docker with the compose plugin, and Tailscale (for the MQTT
 bridge to Florida). You also need a WiFiLogger (or another Davis TCP
 logger) reachable at `host:port`.
 
-The scripts assume the repo lives at **`/home/jkozik/projects/weewxscw`**
+The scripts assume the repo lives at **`/home/jkozik/projects/weewxscwvue`**
 (`weewxscwbck.sh`, `zabbix/scripts/weewxscw_archive.py`, and the cron line).
 Clone it there, or edit those paths.
 
 1. Clone and create the live config:
    ```bash
    mkdir -p ~/projects && cd ~/projects
-   git clone https://github.com/jkozik/weewxscw.git && cd weewxscw
+   git clone https://github.com/jkozik/weewxscwvue.git && cd weewxscwvue
    cp data/weewx.conf.example data/weewx.conf
    # edit data/weewx.conf, section [Vantage]:
    #   host = <ddns name or IP>     tcp_port = <port>
@@ -154,7 +163,7 @@ Clone it there, or edit those paths.
 
 9. Optional: install the weekly backup in root's crontab (Sunday 23:45):
    ```
-   45 23 * * 0 /home/jkozik/projects/weewxscw/weewxscwbck.sh >> /home/jkozik/projects/weewxscw/weewxscwbck.log 2>&1
+   45 23 * * 0 /home/jkozik/projects/weewxscwvue/weewxscwbck.sh >> /home/jkozik/projects/weewxscwvue/weewxscwbck.log 2>&1
    ```
    The script takes an online SQLite snapshot (weewx keeps running), writes
    a tarball to `/backup/weewxscw.YYYYMMDD.HH.tar.gz`, FTPs a copy (login

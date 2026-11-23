@@ -397,6 +397,20 @@ new.sancapweather.com. The old sancapweather.com (Cumulus, 22222 Envoy,
   `docker tag weewxscw-weewx:pre-saratoga weewxscw-weewx:latest`,
   `docker compose up -d --no-build weewx`.
 
+## 2026-11-23: repo renamed weewxscw → weewxscwvue
+
+- GitHub repo renamed (GitHub redirects the old URL), `git remote set-url`,
+  folder moved to `~/projects/weewxscwvue` with the stack stopped
+  (`docker compose down`, `mv`, `docker compose up -d`; never move a
+  bind-mounted folder under running containers). No rebuild: the Compose
+  project name is set in the file, so containers and image keep their names.
+- Hard-coded path updated in `weewxscwbck.sh`, `zabbix/scripts/weewxscw_archive.py`
+  (plus the installed copy in `/etc/zabbix/scripts/`) and root's cron line.
+- Kept on purpose: Zabbix item keys, backup/tarball names, secrets file
+  name, container names, MQTT topic (see README "Naming").
+- A temporary symlink `~/projects/weewxscw` → `weewxscwvue` covered cron and
+  Zabbix until they were updated.
+
 ## Still to do
 
 - Watch weewxscw for a few days, then retire Cumulus and the Windows VM
