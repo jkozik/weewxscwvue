@@ -411,6 +411,25 @@ new.sancapweather.com. The old sancapweather.com (Cumulus, 22222 Envoy,
 - A temporary symlink `~/projects/weewxscw` → `weewxscwvue` covered cron and
   Zabbix until they were updated.
 
+## 2026-11-24: Envoy archive interval 15 → 5 minutes
+
+- The 15-minute interval was a setting in the Envoy (from my father's
+  station), not a limit of weewx or the Saratoga feed. weewx uses
+  `record_generation = hardware`, so the Envoy decides.
+- Done right after the 16:15 EST record and its FTP: `docker compose stop
+  weewx`, `docker compose run --rm --no-deps weewx device --set-interval=5 -y`
+  ("Archive interval now set to 300 seconds… Archive records erased"; weewx
+  already had them), `device --info` confirmed 300 s, `docker compose start
+  weewx`. Down about 40 s; clock error 3.3 s.
+- First 5-minute record 16:20 EST (interval 5), FTP'd 15 files at 16:20:27;
+  new.sancapweather.com served it within a minute (the .128 NFS mount
+  caches file attributes for a few seconds).
+- No database changes: each record carries its own interval, so summaries
+  and NOAA reports are correct across the 10-minute (Cumulus), 15-minute and
+  5-minute stretches. Zabbix (age > 35 min) and the container health check
+  (Seasons page < 35 min old) needed no change.
+- Back out: same steps with `--set-interval=15`.
+
 ## Still to do
 
 - Watch weewxscw for a few days, then retire Cumulus and the Windows VM
@@ -419,6 +438,5 @@ new.sancapweather.com. The old sancapweather.com (Cumulus, 22222 Envoy,
 - The M5Stick + ENV III box (UV and solar) will publish to the osprey
   Mosquitto broker (osprey project). Later: feed it into this weewx too
   (MQTTSubscribe, like weewxrtlsdr's indoor sensor).
-- Build the new.sancapweather.com Saratoga site on its own host, reading
-  `sancapvueweewx/public_html`; then consider `remote_server_url` for realtime.
-- Commit the ftp-weather changes on .208.
+- Optional: 15-second realtime for new.sancapweather.com (clientraw.txt
+  more often than each archive record). Decided to study it more first.

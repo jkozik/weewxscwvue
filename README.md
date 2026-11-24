@@ -24,7 +24,8 @@ Vantage Vue ISS ──radio, ch 1──▶ Davis Envoy ──▶ WiFiLogger (TCP
 ```
 
 - weewx polls the Envoy over the internet through the WiFiLogger. It reads
-  live readings every few seconds and the Envoy's 15-minute archive records.
+  live readings every few seconds and the Envoy's 5-minute archive records
+  (15 minutes until 2026-11-24; see NOTES).
 - The stock **Seasons** skin is served by nginx on host port **8090**. A
   Cloudflare Tunnel maps `weewx.sancapweather.com` to that port; no router
   port forwards are needed.
@@ -188,8 +189,8 @@ docker logs weewx-scw 2>&1 | grep -E "Clock error|Starting main packet loop" | t
 #    If only inTemp/barometer appear, the Envoy isn't hearing the outdoor unit (step 3).
 docker logs --since 2m weewx-scw 2>&1 | grep '^LOOP' | tail -1 | tr ',' '\n' | grep -E 'outTemp|outHumidity|windSpeed'
 
-# 4. A new archive record every 15 minutes, followed by a report
-docker logs --since 20m weewx-scw 2>&1 | grep -E "Added record .* to database|Generated"
+# 4. A new archive record every 5 minutes, followed by a report
+docker logs --since 10m weewx-scw 2>&1 | grep -E "Added record .* to database|Generated"
 
 # 5. The page is served
 curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8090/    # expect 200
@@ -249,12 +250,15 @@ numbers:
   VM's own LAN**, and accepting it could send local traffic (pfSense,
   Zabbix, the backup FTP server) through the tailnet. The MQTT bridge
   needs only the 100.x addresses.
-- **The Saratoga site updates every 15 minutes.** FTP runs after each
-  archive record, and the Envoy's archive interval is 15 minutes, so the
-  uploaded `clientraw.txt` is up to 15 minutes old even though weewx
-  rewrites it locally every 15 s. For true realtime, set
-  `[WeewxSaratoga] [[RealtimeClientraw]] remote_server_url` to the Saratoga
-  site's `post_clientraw.php` once that site exists.
+- **The Saratoga site updates every 5 minutes.** FTP runs after each
+  archive record, and the Envoy's archive interval is 5 minutes (stored in
+  the Envoy; `record_generation = hardware`, so `archive_interval` in
+  weewx.conf is ignored). The uploaded `clientraw.txt` is up to 5 minutes
+  old even though weewx rewrites it locally every 15 s. To change the
+  interval: `docker compose stop weewx`,
+  `docker compose run --rm --no-deps weewx device --set-interval=N -y`,
+  `docker compose start weewx`. This erases the Envoy's stored records, so
+  do it just after an archive record has been saved.
 - **weewx-saratoga's `weewxwd.sdb` starts empty** on a fresh install (it
   isn't backfilled from `weewx.sdb`). Until the first archive record after
   start, `WEEWXtags.php` and `clientrawextra.txt` fail with a `TypeError`
