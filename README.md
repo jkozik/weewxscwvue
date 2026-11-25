@@ -268,6 +268,7 @@ weewx174.kozik.net:
 |---|---|---|
 | `weewxscw.website.health` (0 ok / 1 banner / 2 stale / 3 down) | 5m | `min(...,#2)>0` (High) |
 | `weewxscw.divumwx.health` (sancapweather.net: 0 ok / 1 wrong content / 2 stale / 3 down) | 5m | `min(...,#2)>0` (High) |
+| `weewxscw.webcam.age[net]`, `[new]`, `[com]` (minutes since the webcam image changed on sancapweather.net / new.sancapweather.com / sancapweather.com; 999 unreachable) | 5m | `min(...,#2)>15` (Average) |
 | `weewxscw.archive[age]` (minutes) | 5m | `last(...)>35` (High) |
 | `weewxscw.archive[outtemp]` (1/0) | 5m | `max(...,30m)=0` (High) |
 | `weewxscw.archive[rxcheck]` (%, Numeric float) | 5m | `avg(...,1h)<50` (Warning) |
@@ -283,7 +284,8 @@ numbers:
 - `SCW OK/Problem`: 1 OK, 0 Problem. Used by the four `container.health`
   items and `archive[outtemp]`.
 - `SCW no data`: -1 and 999 → No data. Used by `archive[age]` (units
-  `min`), `archive[rxcheck]` (`%`) and `backup.age` (`days`).
+  `min`), the three `webcam.age` items (`min`), `archive[rxcheck]` (`%`)
+  and `backup.age` (`days`).
 
 ## Things to know
 

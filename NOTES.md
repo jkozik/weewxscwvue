@@ -493,9 +493,9 @@ new.sancapweather.com. The old sancapweather.com (Cumulus, 22222 Envoy,
 - `ring_snapshot.py` now takes a list of FTP targets in
   `config/ftp_config.json` (gitignored). Added `sancapvueweewx` @
   .208:30521 `/public_html/webcam`, so the image is on the
-  new.sancapweather.com share at `/mount/webcam/`. The old target (`sancap`
-  @ .204:30321) answers "No route to host", so every run logs one FTP
-  error and exits 1. The new target still works. Backups:
+  new.sancapweather.com share at `/mount/webcam/`. The old target `sancap`
+  was still pointed at .204 (the retired k8s control node): moved to .208,
+  same port 30321, so old sancapweather.com updates again too. Backups:
   `*.pre-multiftp-20261125` in the ringcam folder.
 - new.sancapweather.com: `wxwebcam.php` now uses `/mount/webcam/...` at
   640x360 (it pointed at the old sancapweather.com copy). Branch `webcam`
@@ -504,6 +504,9 @@ new.sancapweather.com. The old sancapweather.com (Cumulus, 22222 Envoy,
   .128:8087/mount/webcam/, keeping it same-site for the card's freshness
   check. `cardWebcam2` (slot 1 opens a timelapse, none yet), mode
   `daylight`. Live conf backup `data/weewx.conf.pre-webcam-20261125`.
+- Zabbix: `weewxscw.webcam.age[net|new|com]`, minutes since the image
+  changed on each site (999 = unreachable), so this can't go unnoticed for
+  six months again.
 - Back out: restore that backup and restart weewx. Remove the volume line
   from `nginx-divumwx` and `docker compose up -d --no-deps nginx-divumwx`.
 
@@ -517,6 +520,5 @@ new.sancapweather.com. The old sancapweather.com (Cumulus, 22222 Envoy,
   (MQTTSubscribe, like weewxrtlsdr's indoor sensor).
 - Optional: 15-second realtime for new.sancapweather.com (clientraw.txt
   more often than each archive record). Decided to study it more first.
-- DivumWX: webcam timelapse (needs ffmpeg in the image); Zabbix check on
-  the webcam image age; later upgrade both stations to the current DivumWX
+- DivumWX: webcam timelapse (needs ffmpeg in the image); later upgrade both stations to the current DivumWX
   together.
