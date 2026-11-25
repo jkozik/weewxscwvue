@@ -152,7 +152,16 @@ null
 {
 "meta": {
 "generated": $(int(time.time() * 1000)),
+## LOCAL CHANGE (weewxscwvue): title for this dashboard only. If the report
+## has [[DivumWXReport]] [[[Extras]]] station_title, use it (sancapweather.net
+## shows "SanCapWeather.net"); otherwise the stock $station.location, which
+## the Seasons site (weewx.sancapweather.com) also uses. Re-apply after a
+## DivumWX update replaces this file.
+#if 'station_title' in $Extras
+"station_location": "$Extras.station_title",#slurp
+#else
 "station_location": "$station.location",#slurp
+#end if
 "station_hardware": "$station.hardware",#slurp
 "station_url": "$station.station_url",#slurp
 "software_version": "$station.version",#slurp

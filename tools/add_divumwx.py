@@ -67,6 +67,8 @@ api['Alerts']['app_id'] = 'replace_me'      # OpenWeatherMap key; alerts off unt
 api['Alerts']['enabled'] = False
 api['Metar']['url'] = 'https://aviationweather.gov/api/data/metar?ids=KFMY&format=json'
 api['AuroraWatch']['enabled'] = False       # UK aurora service, pointless in Florida
+# Dashboard title (needs the LOCAL CHANGE in skins/DivumWX/jsondata/archive.json.tmpl)
+cfg['StdReport']['DivumWXReport']['Extras'] = {'station_title': 'SanCapWeather.net'}
 cfg['Timelapse']['site_root'] = '/data/divumwx'
 cfg['BoltekLightning']['site_root'] = '/data/divumwx'
 

@@ -537,6 +537,8 @@ version = 5.5.2
                     template = jsondata/strings.json.tmpl
         [[[Generators]]]
             generator_list = weewx.cheetahgenerator.CheetahGenerator
+        [[[Extras]]]
+            station_title = SanCapWeather.net
 
 ##############################################################################
 
