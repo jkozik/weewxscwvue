@@ -236,7 +236,8 @@ docker logs --since 10m weewx-scw 2>&1 | grep "report DivumWXReport"
 | Served by | `nginx-divumwx-scw`, host port **8091** → Cloudflare → sancapweather.net |
 | Its own databases | `data/archive/divumwx_extras.sdb` (sunshine, VPD, air quality...); never changes `weewx.sdb`. Backed up weekly with the others |
 | External data (no keys) | Open-Meteo forecast and air quality, aviationweather.gov METAR (**KFMY**, Fort Myers), EMSC earthquakes, NOAA space weather |
-| Cards left out | UV, solar radiation, evapotranspiration (no sensors), pollen (Open-Meteo pollen covers Europe only), webcam (later: images are on Home Assistant on osprey) |
+| Cards left out | UV, solar radiation, evapotranspiration (no sensors), pollen (Open-Meteo pollen covers Europe only) |
+| Webcam | `cardWebcam2`, the Ring camera image via Home Assistant (osprey), fetched by ringcam on .128 into the new.sancapweather.com share; nginx-divumwx proxies `/webcam/` to it. See NOTES.md 2026-11-25 |
 | Off | Weather alerts (need an OpenWeatherMap key in `[WeatherAPI] [[Alerts]] app_id` and `enabled = True`), AuroraWatch (UK only), Timelapse and Boltek services |
 | Title | "SanCapWeather.net" from `[StdReport] [[DivumWXReport]] [[[Extras]]] station_title`, via a LOCAL CHANGE in `skins/DivumWX/jsondata/archive.json.tmpl`. Without it DivumWX would show `[Station] location`, which Seasons uses |
 

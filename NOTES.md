@@ -481,6 +481,32 @@ new.sancapweather.com. The old sancapweather.com (Cumulus, 22222 Envoy,
   (removes nginx-divumwx-scw). `data/divumwx` and `divumwx_extras.sdb` can
   then be deleted.
 
+## 2026-11-25: webcam (Ring camera via Home Assistant)
+
+- The image comes from `~/projects/ringcam` on .128 (its own repo,
+  github.com/jkozik/ringcam): jkozik's crontab runs `run_snapshot.sh`
+  every 5 min, which fetches `camera.bayou_view_from_deck_live_view` from
+  Home Assistant, adds a timestamp banner with ffmpeg, and FTPs
+  `sancap-bayou-view.jpg`.
+- It had been failing since 2026-05-23: `run_snapshot.sh` lost its
+  executable bit ("Permission denied" every run). Fixed with `chmod +x`.
+- `ring_snapshot.py` now takes a list of FTP targets in
+  `config/ftp_config.json` (gitignored). Added `sancapvueweewx` @
+  .208:30521 `/public_html/webcam`, so the image is on the
+  new.sancapweather.com share at `/mount/webcam/`. The old target (`sancap`
+  @ .204:30321) answers "No route to host", so every run logs one FTP
+  error and exits 1. The new target still works. Backups:
+  `*.pre-multiftp-20261125` in the ringcam folder.
+- new.sancapweather.com: `wxwebcam.php` now uses `/mount/webcam/...` at
+  640x360 (it pointed at the old sancapweather.com copy). Branch `webcam`
+  in ~/projects/InstallSCWvueWeewx.com on .128, rebuilt.
+- sancapweather.net: `nginx-divumwx/default.conf` proxies `/webcam/` to
+  .128:8087/mount/webcam/, keeping it same-site for the card's freshness
+  check. `cardWebcam2` (slot 1 opens a timelapse, none yet), mode
+  `daylight`. Live conf backup `data/weewx.conf.pre-webcam-20261125`.
+- Back out: restore that backup and restart weewx. Remove the volume line
+  from `nginx-divumwx` and `docker compose up -d --no-deps nginx-divumwx`.
+
 ## Still to do
 
 - Watch weewxscw for a few days, then retire Cumulus and the Windows VM
@@ -491,6 +517,6 @@ new.sancapweather.com. The old sancapweather.com (Cumulus, 22222 Envoy,
   (MQTTSubscribe, like weewxrtlsdr's indoor sensor).
 - Optional: 15-second realtime for new.sancapweather.com (clientraw.txt
   more often than each archive record). Decided to study it more first.
-- DivumWX: webcam (images on Home Assistant on osprey), weather alerts
-  (OpenWeatherMap key), Zabbix website check for sancapweather.net; later
-  upgrade both stations to the current DivumWX together.
+- DivumWX: webcam timelapse (needs ffmpeg in the image); Zabbix check on
+  the webcam image age; later upgrade both stations to the current DivumWX
+  together.

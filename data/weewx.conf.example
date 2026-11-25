@@ -865,9 +865,16 @@ version = 5.5.2
     in_northern_hemisphere = True
     page_background = seasonal
     rain_sensor = tipping
-    enabled_cards = cardClockOutlook, cardCurrent, cardForecast, cardTemperature, cardAnemometer, cardWindCompass, cardBarometer, cardHumidity, cardEarthDaylight, cardSolarDial, cardGeocentric, cardMoonPhase, cardGreenhouseGas, cardEarthquake, cardWindyRadar, cardTippingRain, cardVapourPressureDeficit
+    enabled_cards = cardClockOutlook, cardCurrent, cardForecast, cardTemperature, cardAnemometer, cardWindCompass, cardBarometer, cardHumidity, cardEarthDaylight, cardSolarDial, cardGeocentric, cardMoonPhase, cardGreenhouseGas, cardEarthquake, cardWindyRadar, cardTippingRain, cardVapourPressureDeficit, cardWebcam2
     solar_cards_asked = yes
     default_cards_added = cardWindyRadar,
+    
+    # Ring camera via Home Assistant (osprey): ~/projects/ringcam on .128 FTPs it
+    # to new.sancapweather.com every 5 min; nginx-divumwx proxies /webcam/ to it.
+    # Webcam slot 2, not 1: slot 1 opens a timelapse (none yet).
+    webcam2_title = Bayou View from the Deck
+    webcam2_image = webcam/sancap-bayou-view.jpg
+    webcam2_mode = daylight
 [WeatherAPI]
     [[Alerts]]
         app_id = replace_me
