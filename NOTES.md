@@ -430,6 +430,57 @@ new.sancapweather.com. The old sancapweather.com (Cumulus, 22222 Envoy,
   (Seasons page < 35 min old) needed no change.
 - Back out: same steps with `--set-interval=15`.
 
+## 2026-11-24/25: DivumWX dashboard → sancapweather.net
+
+- Goal: a Weather34-style DivumWX dashboard for the Vue at sancapweather.net,
+  the same as weewxrtlsdr's new.napervilleweather.net.
+- Chose to copy weewxrtlsdr's DivumWX 2.2.1 rather than run the installer for
+  the newer 2.4.0. Downloaded the official 2.2.0 zip and the 2.2.1 update
+  first and checked that Naperville's code, skin and web folder are exactly
+  those files (the installer only leaves out `js/bootstrap.min.js`).
+  2.3/2.4 only add features (indoor card, visitor counter, AQ options).
+  Plan: upgrade both stations together later.
+- **Clean install without committing 28 MB of DivumWX's files:** the
+  one-shot `divumwx-assets` service (`divumwx-assets/fetch.sh`, Alpine
+  busybox wget/unzip/sha256sum) downloads the pinned zips, checks SHA-256
+  and unpacks the web folder into `data/divumwx`, owned by uid 1000. A marker
+  file per version makes later runs a no-op. weewx and nginx-divumwx wait for
+  it (`service_completed_successfully`). Naperville's own `data/divumwx` is
+  git-ignored with no such step, so weewxrtlsdr can't rebuild that site
+  from git yet: worth copying this there.
+- Config: `tools/add_divumwx.py` copies the DivumWX sections from
+  weewxrtlsdr's live weewx.conf (never its OpenWeather key) and makes the
+  Sanibel changes: METAR KFMY; no UV, solar, ET, pollen (Open-Meteo pollen is
+  Europe-only) or webcam cards; alerts and AuroraWatch off; no Timelapse or
+  Boltek services. ET calculation left as it was.
+- Title: DivumWX shows `$station.location` ("Weewx.SanCapWeather.com", also
+  the Seasons title). LOCAL CHANGE in `archive.json.tmpl`: use
+  `[[DivumWXReport]] [[[Extras]]] station_title` (SanCapWeather.net) when
+  set.
+- Dockerfile: skyfield 1.55 and requests 2.34.2, pinned to Naperville's
+  versions. No ffmpeg until there's a webcam. weewx memory limit 384M → 768M
+  (Naperville's weewx with DivumWX uses ~530M).
+- Healthcheck now also requires `divumwx/jsondata/loop.json` newer than
+  5 min (LiveDataService writes it every 2 s from loop packets).
+- Trial first: separate image tag, a copy of the database and weewx's
+  Simulator driver (a second weewx can't connect to the WiFiLogger), with FTP
+  and MQTT off so no fake data left the host; throwaway nginx on :8099. No
+  errors; the DivumWX report took ~5 s. The trial's "today's low 32 °F" was
+  the simulator's fake data, not a bug.
+- Live 2026-11-24 20:20 EST, right after the 20:20 record and its FTP:
+  installed the new weewx.conf and ran `docker compose up -d --build`.
+  `divumwx-assets` did the real download (both checksums OK); weewx
+  reconnected to the Envoy in ~6 s (clock error 2 s); all containers
+  healthy; :8091 returns 200. The user set up Cloudflare sancapweather.net →
+  192.168.100.174:8091.
+- Backups before: `~/cumulus-import-scw/backup/*.pre-divumwx-20261125`
+  (weewx.conf, weewx.sdb, weewxwd.sdb), image tag `weewxscw-weewx:pre-divumwx`.
+  Zips kept in `~/cumulus-import-scw/divumwx-zips/`.
+- Back out: restore `weewx.conf.pre-divumwx-20261125` to `data/weewx.conf`,
+  `git switch main`, `docker compose up -d --build --remove-orphans`
+  (removes nginx-divumwx-scw). `data/divumwx` and `divumwx_extras.sdb` can
+  then be deleted.
+
 ## Still to do
 
 - Watch weewxscw for a few days, then retire Cumulus and the Windows VM
@@ -440,3 +491,6 @@ new.sancapweather.com. The old sancapweather.com (Cumulus, 22222 Envoy,
   (MQTTSubscribe, like weewxrtlsdr's indoor sensor).
 - Optional: 15-second realtime for new.sancapweather.com (clientraw.txt
   more often than each archive record). Decided to study it more first.
+- DivumWX: webcam (images on Home Assistant on osprey), weather alerts
+  (OpenWeatherMap key), Zabbix website check for sancapweather.net; later
+  upgrade both stations to the current DivumWX together.

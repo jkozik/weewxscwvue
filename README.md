@@ -16,12 +16,15 @@ Vantage Vue ISS ──radio, ch 1──▶ Davis Envoy ──▶ WiFiLogger (TCP
                                   │      │ data/archive/weewx.sdb (SQLite)  │
                                   │      ▼ data/public_html (Seasons skin)  │
                                   │ nginx-scw   :8090 ──▶ Cloudflare Tunnel │
+                                  │      ▼ data/divumwx (DivumWX)           │
+                                  │ nginx-divumwx-scw :8091 ──▶ Cloudflare  │
                                   │      ▼ data/saratoga_html ──FTP──┐      │
                                   └──────────────────────────────────┼──────┘
                        ftp-sancapvueweewx (k8s on .208:30521) ◀──────┘
                          ──▶ NFS 192.168.100.153:/home/nfs/weather-stations/
                              sancapvueweewx/public_html ──▶ new.sancapweather.com
 ```
+(The :8091 line is sancapweather.net, the DivumWX dashboard.)
 
 - weewx polls the Envoy over the internet through the WiFiLogger. It reads
   live readings every few seconds and the Envoy's 5-minute archive records
@@ -43,6 +46,11 @@ Vantage Vue ISS ──radio, ch 1──▶ Davis Envoy ──▶ WiFiLogger (TCP
   (new.sancapweather.com, built separately). Same setup as weewxrtlsdr →
   napervilleweather.com. The current sancapweather.com (Cumulus on the
   22222 Envoy, `sancap/` folder) is separate and untouched.
+- **DivumWX dashboard:** [sancapweather.net](https://sancapweather.net/)
+  (title "SanCapWeather.net") is the [DivumWX](https://github.com/Millardiang/weewx-divumwx)
+  2.2.1 skin, served by `nginx-divumwx-scw` on host port **8091** through
+  Cloudflare. Same version and setup as weewxrtlsdr's
+  new.napervilleweather.net. See "The DivumWX dashboard" below.
 - The Vue has no solar or UV sensors.
 
 `NOTES.md` is the log of how this was built and what went wrong along the way.
@@ -67,6 +75,10 @@ item keys (`weewxscw.*`), the backup script and tarballs (`weewxscwbck.sh`,
 | `data/skins/`, `data/bin/` | stock skins and weewx's user directory, as created by `weectl station create` |
 | `data/bin/user/{rtcr,ws*,stackedwindrose}.py`, `data/skins/{WEEWXtags,Clientraw,SteelSeriesGauge}` | weewx-saratoga 0.1.11 and the SteelSeries gauge template, copied from weewxrtlsdr (no installer run). `stackedwindrose.py` has a LOCAL CHANGE for WeeWX 5.5 (`stop_event`) |
 | `data/skins/SaratogaNOAA` | local skin: only the NOAA monthly/yearly reports (stock Seasons templates) for the Saratoga site |
+| `data/bin/user/divumwx*.py`, `stats.py`, `lastrain.py`, `time_since.py`, `data/skins/DivumWX` | DivumWX 2.2.1 code and skin, copied from weewxrtlsdr (identical to the official 2.2.0 + 2.2.1 update; no installer run). `skins/DivumWX/jsondata/archive.json.tmpl` has a LOCAL CHANGE (dashboard title) |
+| `divumwx-assets/fetch.sh` | one-shot download of DivumWX's static web files (pinned version + SHA-256) into `data/divumwx`, run by the `divumwx-assets` service |
+| `tools/add_divumwx.py` | adds the DivumWX settings to a weewx.conf (how the live config and the example were made) |
+| `data/LICENSE.divumwx` | DivumWX's GPL-3 license |
 | `weewxscwbck.sh` | weekly backup (cron) |
 | `zabbix/` | Zabbix agent UserParameters and scripts (site freshness, archive age, outdoor data, reception, container health, backup age) |
 | `cumulus-import/` | one-off Cumulus history import: cleanup, import config, verification |
@@ -74,7 +86,8 @@ item keys (`weewxscw.*`), the backup script and tarballs (`weewxscwbck.sh`,
 ## Secrets
 
 `data/weewx.conf` holds the station's DDNS host name and port, the MQTT
-password and the FTP password (`[StdReport] [[FTP]]`). It is git-ignored. `data/weewx.conf.example` is the
+password, the FTP password (`[StdReport] [[FTP]]`) and, if set, the
+OpenWeatherMap key for DivumWX alerts (`[WeatherAPI] [[Alerts]] app_id`). It is git-ignored. `data/weewx.conf.example` is the
 same file with `replace_me` placeholders. When you change the config, copy
 non-secret changes into the example as well.
 
@@ -155,9 +168,13 @@ Clone it there, or edit those paths.
    ```
    On first start, weewx downloads the Envoy's stored archive before it
    starts the live loop. **Don't restart it during that download.**
+   Before weewx starts, the one-shot `divumwx-assets` container downloads
+   DivumWX's web files into `data/divumwx` (needs internet once; check with
+   `docker logs divumwx-assets-scw`).
 
 8. Point things at this machine:
-   - **Cloudflare Tunnel:** `weewx.sancapweather.com` → `<this VM's LAN IP>:8090`.
+   - **Cloudflare Tunnel:** `weewx.sancapweather.com` → `<this VM's LAN IP>:8090`,
+     `sancapweather.net` → `<this VM's LAN IP>:8091`.
    - **osprey's Mosquitto bridge:** `address <this VM's tailscale ip -4>:1884`,
      login `osprey-bridge`.
    - Or just a browser at `http://<host>:8090/`.
@@ -179,7 +196,9 @@ Clone it there, or edit those paths.
 ## Verify it's working
 
 ```bash
-# 1. All three containers healthy (weewx: Seasons page rewritten in the last 35 min)
+# 1. Containers healthy (weewx: Seasons page rewritten in the last 35 min AND
+#    DivumWX loop.json in the last 5 min). divumwx-assets-scw shows "Exited (0)".
+#    Use `docker ps -a` to see it.
 docker ps --filter name=scw --format '{{.Names}}\t{{.Status}}'
 
 # 2. Connected, clock in sync, live loop running
@@ -202,7 +221,39 @@ docker run --rm --network host eclipse-mosquitto:2.1.2-alpine mosquitto_sub \
 # 7. Saratoga feed: clientraw.txt rewritten every ~15 s, FTP after each archive record
 ls -l --time-style=+%T data/saratoga_html/clientraw.txt
 docker logs --since 20m weewx-scw 2>&1 | grep ftpgenerator      # "Ftp'd NN files"
+
+# 8. DivumWX: page served, report generated each archive record
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8091/    # expect 200
+docker logs --since 10m weewx-scw 2>&1 | grep "report DivumWXReport"
 ```
+
+## The DivumWX dashboard (sancapweather.net)
+
+| | |
+|---|---|
+| Version | 2.2.1, same as weewxrtlsdr (needs WeeWX 5.4 or later) |
+| Web folder | `data/divumwx/` (git-ignored): static files from `divumwx-assets`, `jsondata/` written by weewx, `skyfield-data/` downloaded by skyfield |
+| Served by | `nginx-divumwx-scw`, host port **8091** → Cloudflare → sancapweather.net |
+| Its own databases | `data/archive/divumwx_extras.sdb` (sunshine, VPD, air quality...); never changes `weewx.sdb`. Backed up weekly with the others |
+| External data (no keys) | Open-Meteo forecast and air quality, aviationweather.gov METAR (**KFMY**, Fort Myers), EMSC earthquakes, NOAA space weather |
+| Cards left out | UV, solar radiation, evapotranspiration (no sensors), pollen (Open-Meteo pollen covers Europe only), webcam (later: images are on Home Assistant on osprey) |
+| Off | Weather alerts (need an OpenWeatherMap key in `[WeatherAPI] [[Alerts]] app_id` and `enabled = True`), AuroraWatch (UK only), Timelapse and Boltek services |
+| Title | "SanCapWeather.net" from `[StdReport] [[DivumWXReport]] [[[Extras]]] station_title`, via a LOCAL CHANGE in `skins/DivumWX/jsondata/archive.json.tmpl`. Without it DivumWX would show `[Station] location`, which Seasons uses |
+
+**Why no installer:** DivumWX's installer is interactive and puts its web
+folder under `[StdReport] HTML_ROOT`. Here the code, skin and config were
+copied from weewxrtlsdr's working install instead (they match the official
+release files), and `divumwx-assets/fetch.sh` does the one thing the
+installer did that isn't in git: unpack the web files.
+
+**To upgrade DivumWX later:** change `VERSION`, the URLs and SHA-256 sums in
+`divumwx-assets/fetch.sh`; replace `data/bin/user/divumwx*.py` and
+`data/skins/DivumWX/` with the new release's files (re-apply the LOCAL
+CHANGE); add any new config the release notes mention; back up
+`data/archive/` first; then `docker compose up -d --build`. The new marker
+file makes `divumwx-assets` lay the new web files over the old ones.
+Ideally upgrade weewxrtlsdr at the same time so both stay on one version.
+
 
 ## Monitoring (Zabbix)
 
@@ -269,7 +320,7 @@ numbers:
 ## Back out
 
 `docker compose down`. Nothing outside this directory is touched, except
-the items you installed yourself: the `ftp-sancapvueweewx` server on the
+the items you installed yourself (and the Cloudflare hostnames): the `ftp-sancapvueweewx` server on the
 cluster, the backup cron line, the Zabbix agent
 files, Tailscale, and `~/secrets/weewxscw-mqtt.txt`. The images
 `weewxscw-weewx`, `nginx:1.27-alpine` and `eclipse-mosquitto:2.1.2-alpine`
