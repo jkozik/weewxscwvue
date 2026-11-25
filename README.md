@@ -266,17 +266,20 @@ weewx174.kozik.net:
 | Item key | Interval | Trigger |
 |---|---|---|
 | `weewxscw.website.health` (0 ok / 1 banner / 2 stale / 3 down) | 5m | `min(...,#2)>0` (High) |
+| `weewxscw.divumwx.health` (sancapweather.net: 0 ok / 1 wrong content / 2 stale / 3 down) | 5m | `min(...,#2)>0` (High) |
 | `weewxscw.archive[age]` (minutes) | 5m | `last(...)>35` (High) |
 | `weewxscw.archive[outtemp]` (1/0) | 5m | `max(...,30m)=0` (High) |
 | `weewxscw.archive[rxcheck]` (%, Numeric float) | 5m | `avg(...,1h)<50` (Warning) |
-| `weewxscw.container.health[weewx-scw]`, `[nginx-scw]`, `[mosquitto-scw]` (1/0) | 5m | `max(...,15m)=0` (Average) |
+| `weewxscw.container.health[weewx-scw]`, `[nginx-scw]`, `[nginx-divumwx-scw]`, `[mosquitto-scw]` (1/0) | 5m | `max(...,15m)=0` (Average) |
 | `weewxscw.backup.age` (days) | 1h | `last(...)>8` (Warning) |
 
 Value maps (host → Value mapping), display only; triggers use the raw
 numbers:
 - `SCW website health`: 0 OK, 1 Banner missing, 2 Stale or no timestamp,
   3 Unreachable. Used by `website.health`.
-- `SCW OK/Problem`: 1 OK, 0 Problem. Used by the three `container.health`
+- `SCW DivumWX health`: 0 OK, 1 Wrong content, 2 Stale, 3 Unreachable.
+  Used by `divumwx.health`.
+- `SCW OK/Problem`: 1 OK, 0 Problem. Used by the four `container.health`
   items and `archive[outtemp]`.
 - `SCW no data`: -1 and 999 → No data. Used by `archive[age]` (units
   `min`), `archive[rxcheck]` (`%`) and `backup.age` (`days`).

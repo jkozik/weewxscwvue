@@ -7,7 +7,7 @@
 
 URL="https://weewx.sancapweather.com/"
 BANNER="Weewx.SanCapWeather.com"
-MAX_AGE_MINUTES=35          # 15-min Envoy archive interval x2 + 5 min
+MAX_AGE_MINUTES=35          # 15-min interval x2 + 5 (was); fine for 5-min too
 
 # Keep under the agent's 3 s default Timeout
 CONTENT=$(curl -s -m 2.5 "$URL" 2>/dev/null)
