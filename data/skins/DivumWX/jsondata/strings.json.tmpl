@@ -1,0 +1,47 @@
+#errorCatcher Echo
+##############################################################################
+## strings.json.tmpl -- the client-side translation dictionary.
+##
+## Generates jsondata/strings.json: EVERY language's full phrase set in one
+## payload, nested by language code:
+##
+##   {"da": {"Temperature": "Temperatur", "Min": "Min", ...},
+##    "fr": {"Temperature": "Température", ...},
+##    ...}
+##
+## Built entirely on the Python side ($divumwx_strings_payload, see
+## bin/user/divumwx_cards.py's DivumwxCards._read_all_lang_strings) by
+## reading every skins/DivumWX/lang/*.conf file directly with configobj --
+## deliberately NOT via $gettext(), which only ever has access to the ONE
+## lang file matching this report's own configured `lang` setting. That
+## single-language limitation is exactly why this file used to contain
+## ~260 individual $gettext(...) calls (one render = one language baked
+## in); reading every file directly sidesteps it entirely, and lets the
+## client switch languages in the browser -- the same way its existing
+## unit-system dropdown switches km/h to mph -- without a server round
+## trip, since every language's text is already sitting in this one file.
+##
+## KEEPING THIS FILE IN SYNC WITH en.conf:
+## This template no longer lists individual phrases -- there's nothing
+## here to keep in sync with en.conf any more. Adding a phrase to a card
+## now means: add the key to en.conf (and any language you're translating
+## it into) with a real value; skins/DivumWX/lang/*.conf's own [Texts]
+## keys ARE the source of truth this file reads from directly. A key
+## missing from a given language's .conf simply isn't in that language's
+## sub-object below -- DivumWXI18N.t() (cardI18n.js) falls back to the key
+## itself (English) for that one phrase, same one-string-at-a-time
+## fallback behaviour as always, so a partial translation never breaks
+## the page.
+##
+## A single malformed lang/*.conf file is skipped (with a logged warning),
+## not fatal to this render -- see _read_all_lang_strings()'s own comment
+## for why: archive.json/charts.json share this same search list
+## extension instance, so one bad translation file must not take the
+## whole report down.
+##
+## The whole payload (including the "_default" language marker) is built
+## entirely in Python (see $divumwx_strings_payload's own comment in
+## divumwx_cards.py) and handed here as one already-valid-JSON string --
+## this template does no JSON construction of its own, on purpose.
+##############################################################################
+$divumwx_strings_payload

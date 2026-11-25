@@ -1,0 +1,535 @@
+##errorCatcher Echo
+## Trailing windows ("last hour", "last 10 minutes", "last 24 hours") use
+## $divumwx_last(seconds) from divumwx_cards.py, not WeeWX's $span(...): on the
+## night the clocks go back, $span can put the start in the repeated hour, an
+## hour late, and the whole file then fails ("start time is greater than stop
+## time").
+##
+## DivumWX's extra fields (air density, cloud cover, pollen, VPD, aerosol,
+## pm4_0, ...) are read through $divumwx_extras_binding (divumwx_cards.py):
+## 'divumwx_extras_binding' when the station keeps them in DivumWX's own
+## extras database (divumwx_extras.sdb), else 'wx_binding'.
+##
+## Fixed this session (beta report, Gert):
+##  1. rainRateHourly chained .mm_per_hour onto .rain (group_rain, an
+##     accumulated amount -- always mm, not a genuine rate type), which
+##     threw KeyError: 'mm_per_hour' and crashed the ENTIRE template on
+##     every generation cycle. Reverted to .mm, matching the alltime
+##     "rainRate" key below it, which was already correct. hailRate-based
+##     .mm_per_hour occurrences (prainRateHourly, prainRate) are genuinely
+##     group_rainrate and are correct as-is -- left untouched.
+##  2. This copy of the file had NO crash guards anywhere (an older/
+##     reverted copy predating that convention -- see the handover doc's
+##     "File source-of-truth discipline" note). A single unregistered
+##     observation type (e.g. a particulate sensor field not on a given
+##     station's schema) would silently revert the whole charts.json to
+##     stale content with only a journal entry to show for it. Restored
+##     per-field guards for every hardware-dependent/optional field:
+##     particulates, air density, cloud cover, ET, greenhouse gases,
+##     lightning, pollen, hail/prain, vpd, and solar/UV. barometer, base
+##     rain, outTemp/dewpoint/humidity, and wind are genuinely universal
+##     wview_extended schema types and are left unguarded.
+##  3. IMPORTANT -- the guard pattern is NOT plain '#try / "key": $expr /
+##     #except / "key": [] / #end try'. Cheetah writes literal template
+##     text to the output stream as soon as it's reached, even inside a
+##     #try block -- it does NOT buffer/roll back partial output if the
+##     expression that follows then throws. '"key": ' is plain literal
+##     text that gets written BEFORE $expr is evaluated, so on failure
+##     the output was '"key": "key": [],' -- the literal prefix from the
+##     failed attempt, immediately followed by the #except block's own
+##     full line. That's a corrupted, duplicated key -- invalid JSON --
+##     on every field that ever fails, which is exactly what silently
+##     broke charts.json after the previous "#try / #except" fix in this
+##     same file, even though it looked correct on manual inspection and
+##     passed a hand-rolled (non-Cheetah) simulation. Caught only by
+##     rendering through the real Cheetah engine with actual failing
+##     fields, not by static analysis.
+##     Fixed by computing into a #set variable first (#set never emits
+##     literal output for a failing RHS -- it's a pure assignment
+##     directive) and only emitting the literal '"key": $fv,' line
+##     afterwards, once $fv is already a fully-evaluated, safe value:
+##         #set $fv = []
+##         #try
+##         #set $fv = <expr>
+##         #except
+##         #pass
+##         #end try
+##         "key": $fv,
+##     Verified against a real Cheetah3 render (not just JSON.loads on
+##     hand-written text) with multiple fields deliberately failing at
+##     once, both with and without hail data present.
+##  4. Also found while verifying JSON well-formedness: the tail of this
+##     file had one extra, unmatched closing '}' (3 '{' vs 4 '}' in the
+##     original) -- silently produced invalid JSON on every successful
+##     generation, independent of bugs #1-#3 above. Removed.
+##
+[
+{
+"chartPlot": {"series":
+{##airquality
+#set $fv = []
+#try
+#set $fv = $divumwx_last(86400).pm1_0.series(aggregate_type='max', aggregate_interval=3600, time_series='start', time_unit='unix_epoch_ms').round(1).json
+#except
+#pass
+#end try
+"pm1_0Hourly": $fv,
+#set $fv = []
+#try
+#set $fv = $divumwx_last(86400).pm2_5.series(aggregate_type='max', aggregate_interval=3600, time_series='start', time_unit='unix_epoch_ms').round(1).json
+#except
+#pass
+#end try
+"pm2_5Hourly": $fv,
+#set $fv = []
+#try
+#set $fv = $divumwx_last(86400, data_binding=$divumwx_extras_binding).pm4_0.series(aggregate_type='max', aggregate_interval=3600, time_series='start', time_unit='unix_epoch_ms').round(1).json
+#except
+#pass
+#end try
+"pm4_0Hourly": $fv,
+#set $fv = []
+#try
+#set $fv = $divumwx_last(86400).pm10_0.series(aggregate_type='max', aggregate_interval=3600, time_series='start', time_unit='unix_epoch_ms').round(1).json
+#except
+#pass
+#end try
+"pm10_0Hourly": $fv,
+#set $fv = []
+#try
+#set $fv = $divumwx_last(86400, data_binding=$divumwx_extras_binding).aerosol_optical_depth.series(aggregate_type='max', aggregate_interval=3600, time_series='start', time_unit='unix_epoch_ms').round(3).json
+#except
+#pass
+#end try
+"aodHourly": $fv,
+#set $fv = []
+#try
+#set $fv = $alltime.pm1_0.series(aggregate_type='max', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').round(0).json
+#except
+#pass
+#end try
+"pm1_0": $fv,
+#set $fv = []
+#try
+#set $fv = $alltime.pm2_5.series(aggregate_type='max', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').round(0).json
+#except
+#pass
+#end try
+"pm2_5": $fv,
+#set $fv = []
+#try
+#set $fv = $alltime(data_binding=$divumwx_extras_binding).pm4_0.series(aggregate_type='max', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').round(0).json
+#except
+#pass
+#end try
+"pm4_0": $fv,
+#set $fv = []
+#try
+#set $fv = $alltime.pm10_0.series(aggregate_type='max', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').round(0).json
+#except
+#pass
+#end try
+"pm10_0": $fv,
+#set $fv = []
+#try
+#set $fv = $alltime(data_binding=$divumwx_extras_binding).aerosol_optical_depth.series(aggregate_type='max', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').round(0).json
+#except
+#pass
+#end try
+"aodMax": $fv,
+##barometer and airdensity
+"baromAvgHourly": $divumwx_last(86400).barometer.series(aggregate_type='avg', aggregate_interval=3600, time_series='start', time_unit='unix_epoch_ms').hPa.round(1).json,
+"baromMaxHourly": $divumwx_last(86400).barometer.series(aggregate_type='max', aggregate_interval=3600, time_series='start', time_unit='unix_epoch_ms').hPa.round(1).json,
+"baromMinHourly": $divumwx_last(86400).barometer.series(aggregate_type='min', aggregate_interval=3600, time_series='start', time_unit='unix_epoch_ms').hPa.round(1).json,
+"baromMax": $alltime.barometer.series(aggregate_type='max', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').hPa.round(0).json,
+"baromMin": $alltime.barometer.series(aggregate_type='min', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').hPa.round(0).json,
+"baromAvg": $alltime.barometer.series(aggregate_type='avg', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').hPa.round(0).json,
+#set $fv = []
+#try
+#set $fv = $alltime(data_binding=$divumwx_extras_binding).AirDensity.series(aggregate_type='max', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').round(0).json
+#except
+#pass
+#end try
+"airDenMax": $fv,
+#set $fv = []
+#try
+#set $fv = $alltime(data_binding=$divumwx_extras_binding).AirDensity.series(aggregate_type='min', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').round(0).json
+#except
+#pass
+#end try
+"airDenMin": $fv,
+#set $fv = []
+#try
+#set $fv = $alltime(data_binding=$divumwx_extras_binding).AirDensity.series(aggregate_type='avg', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').round(0).json
+#except
+#pass
+#end try
+"airDenAvg": $fv,
+##cloudcover
+#set $fv = []
+#try
+#set $fv = $day(data_binding=$divumwx_extras_binding).cloudcover.series(aggregate_type='max', aggregate_interval=900, time_series='start', time_unit='unix_epoch_ms').round(0).json
+#except
+#pass
+#end try
+"cloudCover": $fv,
+##evapotranspiration
+#set $fv = []
+#try
+#set $fv = $divumwx_last(86400).ET.series(aggregate_type='avg', aggregate_interval=3600, time_series='start', time_unit='unix_epoch_ms').mm.round(2).json
+#except
+#pass
+#end try
+"evtHourly": $fv,
+#set $fv = []
+#try
+#set $fv = $alltime.ET.series(aggregate_type='max', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').mm.round(0).json
+#except
+#pass
+#end try
+"evtMax": $fv,
+#set $fv = []
+#try
+#set $fv = $alltime.ET.series(aggregate_type='min', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').mm.round(0).json
+#except
+#pass
+#end try
+"evtMin": $fv,
+#set $fv = []
+#try
+#set $fv = $alltime.ET.series(aggregate_type='avg', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').mm.round(0).json
+#except
+#pass
+#end try
+"evtAvg": $fv,
+##greenhouse gases
+#set $fv = []
+#try
+#set $fv = $divumwx_last(86400).co.series(aggregate_type='max', aggregate_interval=3600, time_series='start', time_unit='unix_epoch_ms').round(3).json
+#except
+#pass
+#end try
+"coHourly": $fv,
+#set $fv = []
+#try
+#set $fv = $divumwx_last(86400).co2.series(aggregate_type='max', aggregate_interval=3600, time_series='start', time_unit='unix_epoch_ms').round(1).json
+#except
+#pass
+#end try
+"co2Hourly": $fv,
+#set $fv = []
+#try
+#set $fv = $divumwx_last(86400).nh3.series(aggregate_type='max', aggregate_interval=3600, time_series='start', time_unit='unix_epoch_ms').round(4).json
+#except
+#pass
+#end try
+"nh3Hourly": $fv,
+#set $fv = []
+#try
+#set $fv = $divumwx_last(86400).no2.series(aggregate_type='max', aggregate_interval=3600, time_series='start', time_unit='unix_epoch_ms').round(4).json
+#except
+#pass
+#end try
+"no2Hourly": $fv,
+#set $fv = []
+#try
+#set $fv = $divumwx_last(86400).o3.series(aggregate_type='max', aggregate_interval=3600, time_series='start', time_unit='unix_epoch_ms').round(4).json
+#except
+#pass
+#end try
+"o3Hourly": $fv,
+#set $fv = []
+#try
+#set $fv = $divumwx_last(86400).so2.series(aggregate_type='max', aggregate_interval=3600, time_series='start', time_unit='unix_epoch_ms').round(4).json
+#except
+#pass
+#end try
+"so2Hourly": $fv,
+#set $fv = []
+#try
+#set $fv = $alltime.co.series(aggregate_type='max', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').round(0).json
+#except
+#pass
+#end try
+"coMax": $fv,
+#set $fv = []
+#try
+#set $fv = $alltime.co2.series(aggregate_type='max', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').round(0).json
+#except
+#pass
+#end try
+"co2Max": $fv,
+#set $fv = []
+#try
+#set $fv = $alltime.nh3.series(aggregate_type='max', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').round(0).json
+#except
+#pass
+#end try
+"nh3Max": $fv,
+#set $fv = []
+#try
+#set $fv = $alltime.no2.series(aggregate_type='max', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').round(0).json
+#except
+#pass
+#end try
+"no2Max": $fv,
+#set $fv = []
+#try
+#set $fv = $alltime.o3.series(aggregate_type='max', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').round(0).json
+#except
+#pass
+#end try
+"o3Max": $fv,
+#set $fv = []
+#try
+#set $fv = $alltime.so2.series(aggregate_type='max', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').round(0).json
+#except
+#pass
+#end try
+"so2Max": $fv,
+##lightning
+#set $fv = []
+#try
+#set $fv = $divumwx_last(86400).lightning_strike_count.series(aggregate_type='sum', aggregate_interval=3600, time_series='start', time_unit='unix_epoch_ms').round(0).json
+#except
+#pass
+#end try
+"lightCountHourly": $fv,
+#set $fv = []
+#try
+#set $fv = $divumwx_last(86400).lightning_distance.series(aggregate_type='avg', aggregate_interval=3600, time_series='start', time_unit='unix_epoch_ms').round(1).json
+#except
+#pass
+#end try
+"lightDistHourly": $fv,
+#set $fv = []
+#try
+#set $fv = $alltime.lightning_distance.series(aggregate_type='max', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').round(0).json
+#except
+#pass
+#end try
+"lightDist": $fv,
+#set $fv = []
+#try
+#set $fv = $alltime.lightning_strike_count.series(aggregate_type='max', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').round(0).json
+#except
+#pass
+#end try
+"lightCount": $fv,
+##pollen
+#set $fv = []
+#try
+#set $fv = $divumwx_last(86400, data_binding=$divumwx_extras_binding).alder_pollen.series(aggregate_type='max', aggregate_interval=3600, time_series='start', time_unit='unix_epoch_ms').round(0).json
+#except
+#pass
+#end try
+"alderHourly": $fv,
+#set $fv = []
+#try
+#set $fv = $divumwx_last(86400, data_binding=$divumwx_extras_binding).birch_pollen.series(aggregate_type='max', aggregate_interval=3600, time_series='start', time_unit='unix_epoch_ms').round(0).json
+#except
+#pass
+#end try
+"birchHourly": $fv,
+#set $fv = []
+#try
+#set $fv = $divumwx_last(86400, data_binding=$divumwx_extras_binding).olive_pollen.series(aggregate_type='max', aggregate_interval=3600, time_series='start', time_unit='unix_epoch_ms').round(0).json
+#except
+#pass
+#end try
+"oliveHourly": $fv,
+#set $fv = []
+#try
+#set $fv = $divumwx_last(86400, data_binding=$divumwx_extras_binding).grass_pollen.series(aggregate_type='max', aggregate_interval=3600, time_series='start', time_unit='unix_epoch_ms').round(0).json
+#except
+#pass
+#end try
+"grassHourly": $fv,
+#set $fv = []
+#try
+#set $fv = $divumwx_last(86400, data_binding=$divumwx_extras_binding).mugwort_pollen.series(aggregate_type='max', aggregate_interval=3600, time_series='start', time_unit='unix_epoch_ms').round(0).json
+#except
+#pass
+#end try
+"mugwortHourly": $fv,
+#set $fv = []
+#try
+#set $fv = $divumwx_last(86400, data_binding=$divumwx_extras_binding).ragweed_pollen.series(aggregate_type='max', aggregate_interval=3600, time_series='start', time_unit='unix_epoch_ms').round(0).json
+#except
+#pass
+#end try
+"ragweedHourly": $fv,
+#set $fv = []
+#try
+#set $fv = $alltime(data_binding=$divumwx_extras_binding).alder_pollen.series(aggregate_type='max', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').round(0).json
+#except
+#pass
+#end try
+"alder": $fv,
+#set $fv = []
+#try
+#set $fv = $alltime(data_binding=$divumwx_extras_binding).birch_pollen.series(aggregate_type='max', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').round(0).json
+#except
+#pass
+#end try
+"birch": $fv,
+#set $fv = []
+#try
+#set $fv = $alltime(data_binding=$divumwx_extras_binding).olive_pollen.series(aggregate_type='max', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').round(0).json
+#except
+#pass
+#end try
+"olive": $fv,
+#set $fv = []
+#try
+#set $fv = $alltime(data_binding=$divumwx_extras_binding).grass_pollen.series(aggregate_type='max', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').round(0).json
+#except
+#pass
+#end try
+"grass": $fv,
+#set $fv = []
+#try
+#set $fv = $alltime(data_binding=$divumwx_extras_binding).mugwort_pollen.series(aggregate_type='max', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').round(0).json
+#except
+#pass
+#end try
+"mugwort": $fv,
+#set $fv = []
+#try
+#set $fv = $alltime(data_binding=$divumwx_extras_binding).ragweed_pollen.series(aggregate_type='max', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').round(0).json
+#except
+#pass
+#end try
+"ragweed": $fv,
+##rain
+"rainHourly": $divumwx_last(86400).rain.series(aggregate_type='sum', aggregate_interval=3600, time_series='start', time_unit='unix_epoch_ms').mm.round(1).json,
+"rainRateHourly": $divumwx_last(86400).rain.series(aggregate_type='max', aggregate_interval=3600, time_series='start', time_unit='unix_epoch_ms').mm.round(1).json,
+"rain": $alltime.rain.series(aggregate_type='sum', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').mm.round(1).json,
+"rainRate": $alltime.rain.series(aggregate_type='sum', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').mm.round(0).json,
+#if $current.hail.has_data
+#set $fv = []
+#try
+#set $fv = $divumwx_last(86400).hail.series(aggregate_type='sum', aggregate_interval=3600, time_series='start', time_unit='unix_epoch_ms').mm.round(1).json
+#except
+#pass
+#end try
+"prainHourly": $fv,
+#set $fv = []
+#try
+#set $fv = $divumwx_last(86400).hailRate.series(aggregate_type='max', aggregate_interval=3600, time_series='start', time_unit='unix_epoch_ms').mm_per_hour.round(1).json
+#except
+#pass
+#end try
+"prainRateHourly": $fv,
+#set $fv = []
+#try
+#set $fv = $alltime.hail.series(aggregate_type='sum', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').mm.round(0).json
+#except
+#pass
+#end try
+"prain": $fv,
+#set $fv = []
+#try
+#set $fv = $alltime.hailRate.series(aggregate_type='sum', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').mm_per_hour.round(0).json
+#except
+#pass
+#end try
+"prainRate": $fv,
+#end if
+##temp
+"outTempMax": $alltime.outTemp.series(aggregate_type='max', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').degree_C.round(1).json,
+"outTempMin": $alltime.outTemp.series(aggregate_type='min', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').degree_C.round(1).json,
+"outTempAvg": $alltime.outTemp.series(aggregate_type='avg', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').degree_C.round(1).json,
+"outHumidMax": $alltime.outHumidity.series(aggregate_type='max', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').round(0).json,
+"outHumidMin": $alltime.outHumidity.series(aggregate_type='min', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').round(0).json,
+"outDewMax": $alltime.dewpoint.series(aggregate_type='max', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').degree_C.round(0).json,
+"outDewMin": $alltime.dewpoint.series(aggregate_type='min', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').degree_C.round(0).json,
+"outTempHourly": $divumwx_last(86400).outTemp.series(aggregate_type='avg', aggregate_interval=3600, time_series='start', time_unit='unix_epoch_ms').degree_C.round(1).json,
+"outDewHourly": $divumwx_last(86400).dewpoint.series(aggregate_type='avg', aggregate_interval=3600, time_series='start', time_unit='unix_epoch_ms').degree_C.round(1).json,
+"outHumidHourly": $divumwx_last(86400).outHumidity.series(aggregate_type='avg', aggregate_interval=3600, time_series='start', time_unit='unix_epoch_ms').round(0).json,
+##vpd
+#set $fv = []
+#try
+#set $fv = $divumwx_last(86400, data_binding=$divumwx_extras_binding).vpd.series(aggregate_type='avg', aggregate_interval=3600, time_series='start', time_unit='unix_epoch_ms').round(0).json
+#except
+#pass
+#end try
+"vpdHourly": $fv,
+#set $fv = []
+#try
+#set $fv = $alltime(data_binding=$divumwx_extras_binding).vpd.series(aggregate_type='max', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').round(0).json
+#except
+#pass
+#end try
+"vpdMax": $fv,
+#set $fv = []
+#try
+#set $fv = $alltime(data_binding=$divumwx_extras_binding).vpd.series(aggregate_type='min', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').round(0).json
+#except
+#pass
+#end try
+"vpdMin": $fv,
+#set $fv = []
+#try
+#set $fv = $alltime(data_binding=$divumwx_extras_binding).vpd.series(aggregate_type='avg', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').round(0).json
+#except
+#pass
+#end try
+"vpdAvg": $fv,
+##wind
+"windSpeedHourly": $divumwx_last(86400).windSpeed.series(aggregate_type='max', aggregate_interval=3600, time_series='start', time_unit='unix_epoch_ms').meter_per_second.round(1).json,
+"windGustHourly": $divumwx_last(86400).windGust.series(aggregate_type='max', aggregate_interval=3600, time_series='start', time_unit='unix_epoch_ms').meter_per_second.round(1).json,
+"windDirHourly": $divumwx_last(86400).windDir.series(aggregate_type='avg', aggregate_interval=3600, time_series='start', time_unit='unix_epoch_ms').round(0).json,
+"windSpeedMax": $alltime.windSpeed.series(aggregate_type='max', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').meter_per_second.round(1).json,
+"windSpeedAvg": $alltime.windSpeed.series(aggregate_type='avg', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').meter_per_second.round(1).json,
+"windGustMax": $alltime.windGust.series(aggregate_type='max', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').meter_per_second.round(0).json,
+"windGustAvg": $alltime.windGust.series(aggregate_type='avg', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').meter_per_second.round(0).json,
+"windDirAvg": $alltime.windDir.series(aggregate_type='avg', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').round(0).json,
+##solar and energy
+#set $fv = []
+#try
+#set $fv = $divumwx_last(86400).radiation.series(aggregate_type='max', aggregate_interval=3600, time_series='start', time_unit='unix_epoch_ms').round(0).json
+#except
+#pass
+#end try
+"solarRadiationHourly": $fv,
+#set $fv = []
+#try
+#set $fv = $divumwx_last(86400).radiation.series(aggregate_type='max', aggregate_interval=3600, time_series='start', time_unit='unix_epoch_ms').round(0).json
+#except
+#pass
+#end try
+"solarHourly": $fv,
+#set $fv = []
+#try
+#set $fv = $divumwx_last(86400).UV.series(aggregate_type='max', aggregate_interval=3600, time_series='start', time_unit='unix_epoch_ms').round(1).json
+#except
+#pass
+#end try
+"uvHourly": $fv,
+#set $fv = []
+#try
+#set $fv = $alltime.radiation.series(aggregate_type='max', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').round(1).json
+#except
+#pass
+#end try
+"solarMax": $fv,
+#set $fv = []
+#try
+#set $fv = $alltime.radiation.series(aggregate_type='avg', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').round(1).json
+#except
+#pass
+#end try
+"solarAvg": $fv,
+#set $fv = []
+#try
+#set $fv = $alltime.UV.series(aggregate_type='max', aggregate_interval=86400, time_series='start', time_unit='unix_epoch_ms').round(1).json
+#except
+#pass
+#end try
+"UVMax": $fv
+},
+"units": "$unit.label.radiation"#slurp}
+}
+}
+]

@@ -35,7 +35,7 @@ version = 5.5.2
     
     # Altitude of the station, with the unit it is in. This is used only
     # if the hardware cannot supply a value.
-    altitude = 14, foot     # Choose 'foot' or 'meter' for unit
+    altitude = 14, foot    # Choose 'foot' or 'meter' for unit
     
     # Set to type of station hardware. There must be a corresponding stanza
     # in this file, which includes a value for the 'driver' option.
@@ -474,6 +474,69 @@ version = 5.5.2
                 # The following line is used to keep the above lines indented
                 # properly. It can be ignored.
                 unused = unused
+    [[DivumWXReport]]
+        skin = DivumWX
+        enable = true
+        HTML_ROOT = /data/divumwx
+        skin_semantics = 2
+        lang = en
+        unit_system = METRICWX
+        [[[Defaults]]]
+            [[[[Units]]]]
+                [[[[[Groups]]]]]
+                    group_altitude = meter
+                    group_degree_day = degree_C_day
+                    group_pressure = hPa
+                    group_rain = mm
+                    group_rainrate = mm_per_hour
+                    group_speed = meter_per_second
+                    group_speed2 = meter_per_second2
+                    group_temperature = degree_C
+                    mbar = '"mbar"'
+                    hPa = '"hPa"'
+                    inHg = '"in"'
+                    kPa = '"kPa"'
+                    mmHg = '"mmHg"'
+                    mm_per_hour = '"mm"'
+                    cm_per_hour = '"cm"'
+                    inch_per_hour = '"in"'
+                    km_per_hour = '"km/h"'
+                    knot = '"kts"'
+                    meter_per_second = '"m/s"'
+                    mile_per_hour = '"mph"'
+            [[[[Labels]]]]
+                day = '" day", " days"'
+                hour = '" hour", " hours"'
+                minute = '" minute", " minutes"'
+                second = '" second", " seconds"'
+                NONE = '""'
+            [[[[Generic]]]]
+                txBatteryStatus = Transmitter
+                windBatteryStatus = Wind
+                rainBatteryStatus = Rain
+                outTempBatteryStatus = Outside Temperature
+                inTempBatteryStatus = Inside Temperature
+                consBatteryVoltage = Console
+                heatingVoltage = Heating
+                supplyVoltage = Supply
+                referenceVoltage = Reference
+                rain_today = Rain Today
+                wind = Wind
+            [[[[Ordinates]]]]
+                directions = "North, NNE, NE, ENE, East, ESE, SE, SSE, South, SSW, SW, WSW, West, WNW, NW, NNW, N/A"
+        [[[CheetahGenerator]]]
+            encoding = utf8
+            search_list_extensions = user.stats.MyStats, user.divumwx.TimeSince, user.divumwx_cards.DivumwxCards
+            [[[[DVMDATA]]]]
+                encoding = utf8
+                [[[[[AllCharts]]]]]
+                    template = jsondata/charts.json.tmpl
+                [[[[[WeatherData]]]]]
+                    template = jsondata/archive.json.tmpl
+                [[[[[Strings]]]]]
+                    template = jsondata/strings.json.tmpl
+        [[[Generators]]]
+            generator_list = weewx.cheetahgenerator.CheetahGenerator
 
 ##############################################################################
 
@@ -557,6 +620,9 @@ version = 5.5.2
         # WeeWX-Saratoga
         wet_bulb = prefer_hardware
         abs_humidity = prefer_hardware, archive
+        vpd = software
+        AirDensity = software
+        lightning_strike_count = prefer_hardware
 
 ##############################################################################
 
@@ -621,6 +687,16 @@ version = 5.5.2
         table_name = archive
         manager = weewx.manager.DaySummaryManager
         schema = user.wsschema.ws_schema
+    [[divumwx_extras_binding]]
+        database = divumwx_extras_db
+        table_name = archive
+        manager = weewx.manager.DaySummaryManager
+        schema = user.divumwx.schema
+    [[boltek_binding]]
+        database = boltek_sqlite
+        table_name = archive
+        manager = weewx.manager.Manager
+        schema = user.divumwx_boltek.schema
 
 ##############################################################################
 
@@ -645,6 +721,12 @@ version = 5.5.2
     [[ws_mysql]]
         database_type = MySQL
         database_name = weewxwd
+    [[divumwx_extras_db]]
+        database_name = divumwx_extras.sdb
+        database_type = SQLite
+    [[boltek_sqlite]]
+        database_name = divumwx_boltek.sdb
+        database_type = SQLite
 
 ##############################################################################
 
@@ -677,10 +759,10 @@ version = 5.5.2
     # This section specifies which services should be run and in what order.
     [[Services]]
         prep_services = weewx.engine.StdTimeSynch
-        data_services = ,
+        data_services = user.divumwx.SkyfieldLoopData, user.divumwx.DataInjectService, user.divumwx.CloudCoverageOverrideService, user.divumwx.LiveDataService, user.divumwx.WeatherAPIService, user.divumwx_meteoalarm.MeteoalarmService
         process_services = weewx.engine.StdConvert, weewx.engine.StdCalibrate, weewx.engine.StdQC, weewx.wxservices.StdWXCalculate, user.ws.WsWXCalculate
-        xtype_services = weewx.wxxtypes.StdWXXTypes, weewx.wxxtypes.StdPressureCooker, weewx.wxxtypes.StdRainRater, weewx.wxxtypes.StdDelta, user.wsxtypes.StdWSXTypes
-        archive_services = weewx.engine.StdArchive, user.ws.WsArchive
+        xtype_services = weewx.wxxtypes.StdWXXTypes, weewx.wxxtypes.StdPressureCooker, weewx.wxxtypes.StdRainRater, weewx.wxxtypes.StdDelta, user.wsxtypes.StdWSXTypes, user.divumwx.AirDensityService, user.divumwx.vpdService, user.divumwx.LastNonZeroService
+        archive_services = weewx.engine.StdArchive, user.ws.WsArchive, user.divumwx.SunshineDuration, user.divumwx.DivumwxExtrasService
         restful_services = weewx.restx.StdStationRegistry, weewx.restx.StdWunderground, weewx.restx.StdPWSweather, weewx.restx.StdCWOP, weewx.restx.StdWOW, weewx.restx.StdWOWBE, weewx.restx.StdAWEKAS, user.mqtt.MQTT
         report_services = weewx.engine.StdPrint, weewx.engine.StdReport, user.rtcr.RealtimeClientraw
 
@@ -731,3 +813,132 @@ version = 5.5.2
     [[root]]
         level = INFO
         handlers = console,
+[AirDensity]
+    algorithm = simple
+[vpd]
+    algorithm = tetens
+[RadiationDays]
+    min_sunshine = 120
+[Sunduration]
+    global_coeff = 1.0
+    B_coeff = 0.06
+[LastNonZero]
+    algorithm = simple
+[DataInjectService]
+    [[source_airquality]]
+        path = /data/divumwx/jsondata/airquality.txt
+        json_path = current
+        [[[mapping]]]
+            carbon_monoxide = co
+            nitrogen_dioxide = no2
+            sulphur_dioxide = so2
+            ozone = o3
+            ammonia = nh3
+            aerosol_optical_depth = aerosol_optical_depth
+            dust = dust
+            alder_pollen = alder_pollen
+            birch_pollen = birch_pollen
+            olive_pollen = olive_pollen
+            grass_pollen = grass_pollen
+            mugwort_pollen = mugwort_pollen
+            ragweed_pollen = ragweed_pollen
+    [[source_forecast]]
+        path = /data/divumwx/jsondata/forecastcard.txt
+        json_path = current
+        [[[mapping]]]
+            cloud_cover = cloudcover
+[LiveData]
+    json_file = /data/divumwx/jsondata/loop.json
+    update_interval = 2
+    unit_system = METRICWX
+[SkyfieldLoopData]
+    target_path = /data/divumwx/jsondata/almanac.json
+[CloudCoverageOverride]
+    json_file = /data/divumwx/jsondata/cloud_coverage.json
+    max_age_seconds = 300
+[DivumWXCards]
+    warnings_source = openweather
+    in_uk = False
+    in_england = False
+    in_northern_hemisphere = True
+    page_background = seasonal
+    rain_sensor = tipping
+    enabled_cards = cardClockOutlook, cardCurrent, cardForecast, cardTemperature, cardAnemometer, cardWindCompass, cardBarometer, cardHumidity, cardEarthDaylight, cardSolarDial, cardGeocentric, cardMoonPhase, cardGreenhouseGas, cardEarthquake, cardWindyRadar, cardTippingRain, cardVapourPressureDeficit
+    solar_cards_asked = yes
+    default_cards_added = cardWindyRadar,
+[WeatherAPI]
+    [[Alerts]]
+        app_id = replace_me
+        enabled = False
+        api_type = openweather
+        poll_interval = 1800
+        data_path = /data/divumwx/jsondata/openweathermap.txt
+    [[Forecast]]
+        enabled = True
+        api_type = openmeteo
+        data_path = /data/divumwx/jsondata/forecastcard.txt
+        forecast_model = ""
+    [[Airquality]]
+        enabled = True
+        api_type = airquality
+        data_path = /data/divumwx/jsondata/airquality.txt
+    [[Earthquakes]]
+        enabled = True
+        api_type = earthquakes
+        data_path = /data/divumwx/jsondata/eq.txt
+    [[Ki]]
+        enabled = True
+        api_type = ki
+        data_path = /data/divumwx/jsondata/ki.txt
+    [[K2]]
+        enabled = True
+        api_type = k2
+        data_path = /data/divumwx/jsondata/k2.txt
+    [[Ovation]]
+        enabled = True
+        api_type = ovation
+        data_path = /data/divumwx/jsondata/ovation.txt
+    [[Metar]]
+        enabled = True
+        api_type = custom
+        url = https://aviationweather.gov/api/data/metar?ids=KFMY&format=json
+        poll_interval = 300
+        data_path = /data/divumwx/jsondata/me.txt
+    [[Flood]]
+        api_type = flood
+        enabled = False
+        data_path = /data/divumwx/jsondata/flood.txt
+    [[AuroraWatch]]
+        api_type = aurorawatch
+        enabled = False
+        poll_interval = 120
+        data_path = /data/divumwx/jsondata/aurora.txt
+    [[HeatAlert]]
+        api_type = heatalert
+        enabled = False
+        data_path = /data/divumwx/jsondata/heat.txt
+    [[ColdAlert]]
+        api_type = coldalert
+        enabled = False
+        data_path = /data/divumwx/jsondata/cold.txt
+    [[MetOfficeRSS]]
+        api_type = metofficerss
+        enabled = False
+        data_path = /data/divumwx/jsondata/metofficerss.txt
+[Timelapse]
+    site_root = /data/divumwx
+    source_image = webcam/fixed2.jpg
+    capture_interval = 600
+    week_interval = 1800
+    output_dir = webcam-timelapse
+[BoltekLightning]
+    source_file = NSDRealtime.json
+    close_distance = 16
+    poll_interval = 10
+    archive_interval = 300
+    stale_after = 600
+    site_root = /data/divumwx
+    json_file = jsondata/boltek.json
+    history_file = jsondata/boltek_history.json
+    binding = boltek_binding
+    convert = true

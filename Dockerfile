@@ -17,4 +17,10 @@ RUN env -u PIP_TARGET -u PYTHONPATH /opt/venv/bin/pip install --no-cache-dir pah
 # still imports the Python 2/3 compat shim `six`, not present in this image's
 # venv. Same PIP_TARGET/PYTHONPATH override as above (as in weewxrtlsdr).
 RUN env -u PIP_TARGET -u PYTHONPATH /opt/venv/bin/pip install --no-cache-dir six
+# DivumWX dashboard (sancapweather.net) needs skyfield (astronomy) and
+# requests. Pinned to the versions weewxrtlsdr's DivumWX 2.2.1 runs.
+# No ffmpeg yet: it's only for the webcam timelapse (+~430 MB); add it with
+# the webcam later.
+RUN env -u PIP_TARGET -u PYTHONPATH /opt/venv/bin/pip install --no-cache-dir \
+    skyfield==1.55 requests==2.34.2
 USER weewx

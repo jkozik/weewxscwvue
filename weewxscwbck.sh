@@ -25,8 +25,12 @@ KEEP_DAYS=84
 echo "=== weewxscw backup $(/bin/date) ==="
 mkdir -p ${BCKDIR}/project ${BCKDIR}/db
 
-# Project files; the database is snapshotted separately below
+# Project files; the databases are snapshotted separately below.
+# data/divumwx: its static web files ARE kept (so a restore doesn't depend on
+# GitHub still serving the release zips); jsondata/ and skyfield-data/ are
+# regenerated/re-downloaded by weewx, so they're left out.
 rsync -a --delete --exclude 'data/archive/' --exclude '*.log' \
+  --exclude 'data/divumwx/jsondata/' --exclude 'data/divumwx/skyfield-data/' \
   ${PROJ}/ ${BCKDIR}/project/ || { echo "rsync FAILED"; exit 1; }
 
 # MQTT broker logins (plain text; the only copy outside the broker's hashed
@@ -37,7 +41,14 @@ install -m 600 /home/jkozik/secrets/weewxscw-mqtt.txt ${BCKDIR}/secrets/ \
   || echo "WARNING: ~/secrets/weewxscw-mqtt.txt not copied"
 
 # weewxwd.sdb = WeeWX-Saratoga extra observations (created by WsArchive)
-for DB in weewx.sdb weewxwd.sdb; do
+# divumwx_extras.sdb = DivumWX's own observations (sunshine, VPD, air
+# quality...); divumwx_boltek.sdb only if it was ever created.
+rm -f ${BCKDIR}/db/*.sdb
+for DB in weewx.sdb weewxwd.sdb divumwx_extras.sdb divumwx_boltek.sdb; do
+  if [[ ! -e "${PROJ}/data/archive/${DB}" ]]; then
+    [[ $DB == weewx.sdb ]] && { echo "${DB} missing"; exit 1; }
+    continue
+  fi
   python3 - "${PROJ}/data/archive/${DB}" "${BCKDIR}/db/${DB}" <<'EOF' || { echo "db snapshot of ${DB} FAILED"; exit 1; }
 import sqlite3, sys
 src = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True)

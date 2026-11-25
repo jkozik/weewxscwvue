@@ -7,6 +7,9 @@ name: "weewxscw"
 # Cloudflare Tunnel.
 # MQTT: weewx publishes live data to mosquitto-scw (host port 1884); the
 # Florida broker on osprey bridges it over Tailscale for Home Assistant.
+# DivumWX dashboard: data/divumwx on host port 8091 -> sancapweather.net via
+# Cloudflare. Its static web files are fetched (pinned + checksummed) by the
+# one-shot divumwx-assets service; weewx writes its jsondata/.
 
 services:
   weewx:
@@ -20,11 +23,15 @@ services:
         target: /data
     environment:
       - TZ=America/New_York
-    # Fresh Seasons pages = the Envoy is being polled and archive records
-    # are being written. Envoy archive interval is 15 min, so allow 2
-    # intervals plus a 5-min margin before calling it unhealthy.
+    # Healthy = both:
+    #  - Seasons index.html rewritten in the last 35 min: archive records are
+    #    being written (Envoy archive interval 5 min, 15 until 2026-11-24;
+    #    35 min matches the Zabbix archive-age trigger).
+    #  - DivumWX jsondata/loop.json rewritten in the last 5 min: LiveDataService
+    #    writes it every 2 s from live readings, so this catches a dropped
+    #    Envoy/WiFiLogger connection fast, and a stalled sancapweather.net.
     healthcheck:
-      test: ["CMD-SHELL", "find /data/public_html -name 'index.html' -mmin -35 | grep -q . || exit 1"]
+      test: ["CMD-SHELL", "find /data/public_html -name index.html -mmin -35 | grep -q . && find /data/divumwx/jsondata -name loop.json -mmin -5 | grep -q . || exit 1"]
       interval: 5m
       timeout: 10s
       retries: 3
@@ -39,13 +46,28 @@ services:
       resources:
         limits:
           cpus: '1.0'
-          memory: 384M
+          # 384M before DivumWX (skyfield + ~13 services); weewxrtlsdr's
+          # weewx with DivumWX uses ~530M, including its rtldavis decoder.
+          memory: 768M
         reservations:
           cpus: '0.1'
           memory: 64M
     depends_on:
       mosquitto:
         condition: service_started
+      divumwx-assets:
+        condition: service_completed_successfully
+
+  # One-shot: puts DivumWX's static web files into data/divumwx (see
+  # divumwx-assets/fetch.sh). Exits at once when they're already there.
+  divumwx-assets:
+    image: alpine:3.20.3
+    container_name: divumwx-assets-scw
+    restart: "no"
+    command: ["sh", "/fetch.sh"]
+    volumes:
+      - ./data/divumwx:/out
+      - ./divumwx-assets/fetch.sh:/fetch.sh:ro
 
   # Broker for weewx's live data (weewx-mqtt, topic weather/scw/loop).
   # Host port 1884 (1883 is weewxrtlsdr's broker). Reachable from the
@@ -107,3 +129,32 @@ services:
     depends_on:
       weewx:
         condition: service_started
+
+  # DivumWX dashboard -> sancapweather.net (Cloudflare -> host port 8091).
+  nginx-divumwx:
+    image: nginx:1.27-alpine
+    container_name: nginx-divumwx-scw
+    restart: unless-stopped
+    ports:
+      - "8091:80"
+    volumes:
+      - ./data/divumwx:/usr/share/nginx/html:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 64M
+    depends_on:
+      divumwx-assets:
+        condition: service_completed_successfully

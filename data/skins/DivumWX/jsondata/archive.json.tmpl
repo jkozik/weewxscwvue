@@ -1,0 +1,1084 @@
+#errorCatcher Echo
+## Trailing windows ("last hour", "last 10 minutes", "last 24 hours") use
+## $divumwx_last(seconds) from divumwx_cards.py, not WeeWX's $span(...): on the
+## night the clocks go back, $span can put the start in the repeated hour, an
+## hour late, and the whole file then fails ("start time is greater than stop
+## time").
+##
+## archive.json.tmpl — flat JSON snapshot of current/today/trend observation
+## data, converted from the real dvmCombinedData PHP module. This replaces
+## that PHP file's job for the front-end: instead of the JS guessing units
+## from charts.json's hourly series (which is how the wind-speed/gust bug
+## happened — those fields come through in the report's configured display
+## unit, not bare m/s, and the front-end was assuming m/s), every value
+## here goes through WeeWX's own $obj.format(...)/$unit.label tags, so it's
+## already correctly converted to the report's real unit system. No more
+## guessing.
+##
+## Deliberate differences from the original PHP, flagged rather than done
+## quietly:
+##   1. Missing-data fields use the JSON literal `null` (None_string="null")
+##      instead of the PHP version's "0" — "0" reads as a real zero
+##      reading, which isn't true when a sensor has no data at all.
+##   2. Every *_time / *_maxtime / *_mintime field is a raw unix_epoch_ms
+##      integer, not a server-formatted string like PHP's date('H:i', ...).
+##      The PHP baked one fixed format per field (some 'H:i', some
+##      'D j M H:i', some 'j M Y H:i') — formatting that client-side from
+##      a raw timestamp is more flexible and matches how charts.json
+##      already works throughout the rest of this project.
+##   3. Found and fixed a real bug in the original barometer trend
+##      cascade: the negative-side checks were ordered <0, then <-1, then
+##      <-2, then <-3 — since <0 catches every negative value first and
+##      the chain stops on first match, "Falling", "Falling Quickly" and
+##      "Falling Very Rapidly" could never actually be reached; everything
+##      negative collapsed to "Falling Slowly". Reordered to check the
+##      most extreme case first, mirroring how the positive side already
+##      did it correctly.
+##   4. Fixed a second real bug, in the rain block: the "event" field's
+##      $current.eventRain.format(...) call sat OUTSIDE the #try/#except
+##      that was meant to guard storm_start_val above it. When eventRain
+##      threw (not a recognised obs type for this binding), #errorCatcher
+##      Echo's own placeholder syntax — ?'eventRain'? — leaked straight
+##      into the JSON output as a bare token, which isn't valid JSON and
+##      broke parsing of the entire file for every consumer. The format()
+##      call now lives inside the same #try, with a safe "0" default set
+##      beforehand, exactly like storm_start_val's own fallback.
+##
+## Merged with archiveAlternative.json.tmpl this session. That variant
+## existed only because some users' installs keep a handful of derived/
+## extension obs types (AirDensity, cloudbase, cloudcover, threshold,
+## sunshine_time, vpd) in a second database, bound as
+## 'divumwx_extras_binding' in weewx.conf, rather than in the single
+## default weewx.sdb binding this file otherwise reads everything from.
+## Maintaining two near-duplicate templates meant every other fix in this
+## file (the trend-cascade bug, the eventRain #try/#except bug, the
+## localize=False fix, etc.) had to be applied twice and could drift out
+## of sync. Instead, each of those five value groups now tries the
+## default binding first and falls through to divumwx_extras_binding
+## only when the default binding has no data for that specific value,
+## e.g. in the air_density block:
+##   #set $adCurrentObj = $current.AirDensity
+##   #if not $adCurrentObj.has_data
+##   #try
+##   #set $adCurrentObj = $current(data_binding='divumwx_extras_binding').AirDensity
+##   #except
+##   #pass
+##   #end try
+##   #end if
+## The #try/#except around every extras-binding reference matters: most
+## installs never configure 'divumwx_extras_binding' at all, and asking
+## Cheetah to open an unconfigured binding raises immediately, which
+## #errorCatcher Echo does NOT catch inside a #set statement (only bare
+## $var placeholders get that protection -- see the safeMs comment
+## above), so an unguarded reference would take down the whole file's
+## generation rather than just one field. Guarded this way, a station
+## with everything in the default database behaves exactly as
+## archive.json.tmpl always did (the extras binding is never even
+## touched), while a station using the legacy split-database layout
+## gets the same values from the second binding, field by field, and a
+## station with no extras binding configured at all just falls through
+## to null for whichever fields the default binding doesn't have --
+## with no separate template to maintain. archiveAlternative.json.tmpl
+## is no longer needed and can be retired once installs have migrated
+## to this file.
+##
+## Page-theme/almanac concerns from the original file (ephem sun/moon
+## ecliptic calculations, daylight-length, day/night body theme) are left
+## out on purpose — they're not observation data, and astronomical.json
+## already covers that ground (see the project's continuity notes). The
+## trailing PHP includes (dvmColorMap.php, dvmAlmanacData.php,
+## dvmUnitConversions.php, the commented-out meteor showers include) are
+## likewise out of scope for an observations feed.
+##
+#import time
+#import math
+#import platform
+#import os
+#import weewx.units
+##
+## safeMs — guards every int(raw * 1000) timestamp conversion below.
+## $X.raw can legitimately come back None (derived/extension obs types like
+## vpd don't always track maxtime/mintime; any obs can be None if a station
+## has never recorded a value for that aggregation window) and int(None*1000)
+## crashes the whole template generation per the archive.json ERROR log —
+## Cheetah's #errorCatcher Echo only guards individual $var placeholders,
+## not arithmetic inside a $(...) Python expression block, so one None here
+## takes out the entire file rather than just this one field.
+#def safeMs($val)
+#if $val is not None
+$int($val * 1000)
+#else
+null
+#end if
+#end def
+##
+## Fixed this session (beta report, Gert -- station in Kongens Lyngby,
+## Denmark): every numeric field in this file used
+## .format(format_string=..., None_string=..., add_label=False) WITHOUT
+## localize=False. WeeWX's ValueHelper.format() calls Python's
+## locale.format_string() internally when the report/skin's configured
+## language (weewx.conf's [StdReport][[...]] lang setting, or the active
+## system locale) uses a decimal comma instead of a decimal point --
+## Danish (da_DK), German, French, and most of continental Europe do.
+## That's the CORRECT behaviour for a human-facing report page (the
+## Climate Report, the dashboard cards, etc. all want "1,2214" for a
+## Danish reader) but it's exactly WRONG for this file: archive.json is
+## machine-readable JSON, and "1,2214" isn't a JSON number -- it's three
+## separate tokens, which corrupted parsing of the ENTIRE file for every
+## consumer. Since every single numeric field here went through
+## .format(), every one of them corrupted at once as soon as the skin's
+## locale was anything other than a decimal-point one -- that's why the
+## bug hit literally every number in the file simultaneously.
+##
+## The fix is minimal and idiomatic: WeeWX's own .format() already
+## supports a localize=False argument specifically for this -- it was
+## already being used correctly, once, on the
+## alltime.lightning_distance.lastnonzero line below. Added it to the
+## other 144 .format() calls in this file that were missing it, rather
+## than inventing a workaround.
+##
+## This also incidentally fixes a second, hidden bug: five places in this
+## file (baromTrendRaw, dewTrendRaw, humidTrendRaw, indoorTrendRaw,
+## outTempTrendRaw) built a trend value via the same .format() call and
+## then re-parsed it with Python's float() to classify rising/falling/
+## steady. Under a comma-decimal locale, float("0,1234") raises
+## ValueError -- which their own #try/#except was silently swallowing,
+## always falling back to trend=0 ("Steady"). That's very likely why
+## Gert's barom.trend_code showed 0/"Steady" regardless of the station's
+## real pressure trend. With localize=False, .format()'s output is
+## guaranteed to use '.' as the decimal separator, so float() on it now
+## works correctly without needing any separate fallback path.
+##
+{
+"meta": {
+"generated": $(int(time.time() * 1000)),
+"station_location": "$station.location",#slurp
+"station_hardware": "$station.hardware",#slurp
+"station_url": "$station.station_url",#slurp
+"software_version": "$station.version",#slurp
+"divumwx_version": $divumwx_version,#slurp
+#set $pythonVersion = platform.python_version()
+"python_version": "$pythonVersion",#slurp
+#try
+#set $osVersion = dict(line.strip().split('=', 1) for line in open('/etc/os-release') if '=' in line).get('PRETTY_NAME', '').strip('"')
+#if not $osVersion
+#set $osVersion = platform.platform()
+#end if
+#except
+#set $osVersion = platform.platform()
+#end try
+"os_version": "$osVersion",#slurp
+#try
+#set $tzName = open('/etc/timezone').read().strip()
+#if not $tzName
+#set $tzName = os.path.realpath('/etc/localtime').split('zoneinfo/')[-1]
+#end if
+#except
+#try
+#set $tzName = os.path.realpath('/etc/localtime').split('zoneinfo/')[-1]
+#except
+#set $tzName = 'UTC'
+#end try
+#end try
+"timezone": "$tzName",#slurp
+"latitude": $station.stn_info.latitude_f,
+"longitude": $station.stn_info.longitude_f,
+"elevation_m": $station.altitude.meter.raw,
+#try
+#set $stationSince = int($alltime.outTemp.firsttime.raw * 1000)
+#except
+#set $stationSince = "null"
+#end try
+"station_since": $stationSince,
+"os_uptime": $station.os_uptime.raw,
+"uptime_seconds": $station.uptime.raw,
+"enabled_cards": $divumwx_enabled_cards,
+#set $baromUnitsRaw = str($unit.label.barometer).strip()
+#set $rainUnitsRaw = str($unit.label.rain).strip()
+#set $windUnitsRaw = str($unit.label.windSpeed).strip()
+#set $tempUnitsRaw = str($unit.label.outTemp).strip()
+"barometer_units": "$baromUnitsRaw",#slurp
+"rain_units": "$rainUnitsRaw",#slurp
+"wind_units": "$windUnitsRaw",#slurp
+"temp_units": "$tempUnitsRaw",#slurp
+"webcam_title": $divumwx_webcam_title,#slurp
+"webcam_image": $divumwx_webcam_image,#slurp
+"webcams": $divumwx_webcams,#slurp
+"station_image_title": $divumwx_station_image_title,#slurp
+"station_image_path": $divumwx_station_image_path,#slurp
+"in_uk": $divumwx_in_uk,#slurp
+"country_code": $divumwx_country_code,#slurp
+"page_background": $divumwx_page_background,#slurp
+"solar_array_watts": $divumwx_solar_array_watts,#slurp
+"warnings_source": $divumwx_warnings_source,#slurp
+"lang": $divumwx_lang#slurp
+},
+
+"air_density": {
+## DivumWX's own extras database first; WeeWX's main archive only as a
+## fallback (DivumWX no longer keeps its fields there).
+#set $adObj = None
+#set $adUseExtras = False
+#try
+#set $adExtrasObj = $current(data_binding='divumwx_extras_binding').AirDensity
+#if $adExtrasObj.has_data
+#set $adObj = $adExtrasObj
+#set $adUseExtras = True
+#end if
+#except
+#pass
+#end try
+#if $adObj is None
+#try
+#set $adObj = $current.AirDensity
+#except
+#pass
+#end try
+#end if
+#if $adObj is not None and $adObj.has_data
+#set $adDayAvgObj = None
+#set $adDayMaxObj = None
+#set $adDayMinObj = None
+#try
+#if $adUseExtras
+#set $adDayAvgObj = $day(data_binding='divumwx_extras_binding').AirDensity.avg
+#set $adDayMaxObj = $day(data_binding='divumwx_extras_binding').AirDensity.max
+#set $adDayMinObj = $day(data_binding='divumwx_extras_binding').AirDensity.min
+#else
+#set $adDayAvgObj = $day.AirDensity.avg
+#set $adDayMaxObj = $day.AirDensity.max
+#set $adDayMinObj = $day.AirDensity.min
+#end if
+#except
+#pass
+#end try
+#if $adDayAvgObj is not None
+"avg": $adDayAvgObj.format(format_string="%.4f", None_string="null", add_label=False, localize=False),
+#else
+"avg": null,
+#end if
+#if $adDayMaxObj is not None
+"max": $adDayMaxObj.format(format_string="%.4f", None_string="null", add_label=False, localize=False),
+#else
+"max": null,
+#end if
+#if $adDayMinObj is not None
+"min": $adDayMinObj.format(format_string="%.4f", None_string="null", add_label=False, localize=False),
+#else
+"min": null,
+#end if
+"current": $adObj.format(format_string="%.4f", None_string="null", add_label=False, localize=False)
+#else
+"current": null
+#end if
+},
+
+"aqi": {
+"pm1_0": $current.pm1_0.format(format_string="%.1f", None_string="null", add_label=False, localize=False),
+"pm2_5": $current.pm2_5.format(format_string="%.1f", None_string="null", add_label=False, localize=False),
+## pm4_0 is only in DivumWX's extras database. Only formatted if it has
+## data: for a field the database doesn't know, WeeWX's value helper
+## formats as ?'pm4_0'? rather than raising, which isn't valid JSON.
+#set $aqiPm40 = "null"
+#try
+#set $aqiPm40Obj = $current(data_binding=$divumwx_extras_binding).pm4_0
+#if $aqiPm40Obj.has_data
+#set $aqiPm40 = $aqiPm40Obj.format(format_string="%.1f", None_string="null", add_label=False, localize=False)
+#end if
+#except
+#pass
+#end try
+"pm4_0": $aqiPm40,
+"pm10_0": $current.pm10_0.format(format_string="%.1f", None_string="null", add_label=False, localize=False)
+},
+
+"barom": {
+#if $current.barometer.has_data
+#set $baromTrendRaw = $trend.barometer.format(format_string="%.4f", None_string="0", add_label=False, localize=False)
+#try
+#set $baromTrendCode = int(round(float($baromTrendRaw)))
+#except
+#set $baromTrendCode = 0
+#end try
+## Most-extreme-first on BOTH sides — this is the ordering bug fix
+## described at the top of the file.
+## Translation note: these nine phrases are the one place in this file
+## (see the file-level comment block above) that emit natural-language
+## text rather than a formatted number/unit. $gettext(...) resolves each
+## phrase against the report's active [StdReport][[DivumWXReport]] lang
+## setting (skins/DivumWX/lang/<code>.conf's [Texts] section) at
+## generation time, exactly the same mechanism weewx-loopdata/
+## weewx-celestial use for their own live-composed JS strings -- the
+## front-end (cardBarometer.js) never needs to know or care what
+## language is active, it just displays whatever trend_desc it's given.
+## Safe against the Cheetah #try/partial-output bug documented elsewhere
+## in this file: $gettext() is called only inside #set assignments here,
+## never emitted directly inside a #try body.
+#if $baromTrendCode > 3
+#set $baromTrendDesc = $gettext("Rising Very Rapidly")
+#set $baromTrendCode = 4
+#elif $baromTrendCode > 2
+#set $baromTrendDesc = $gettext("Rising Quickly")
+#set $baromTrendCode = 3
+#elif $baromTrendCode > 1
+#set $baromTrendDesc = $gettext("Rising")
+#set $baromTrendCode = 2
+#elif $baromTrendCode > 0
+#set $baromTrendDesc = $gettext("Rising Slowly")
+#set $baromTrendCode = 1
+#elif $baromTrendCode < -3
+#set $baromTrendDesc = $gettext("Falling Very Rapidly")
+#set $baromTrendCode = -4
+#elif $baromTrendCode < -2
+#set $baromTrendDesc = $gettext("Falling Quickly")
+#set $baromTrendCode = -3
+#elif $baromTrendCode < -1
+#set $baromTrendDesc = $gettext("Falling")
+#set $baromTrendCode = -2
+#elif $baromTrendCode < 0
+#set $baromTrendDesc = $gettext("Falling Slowly")
+#set $baromTrendCode = -1
+#else
+#set $baromTrendDesc = $gettext("Steady")
+#set $baromTrendCode = 0
+#end if
+"current": $current.barometer.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"day_avg": $day.barometer.avg.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"day_max": $day.barometer.max.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"day_maxtime": $safeMs($day.barometer.maxtime.raw),
+"day_min": $day.barometer.min.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"day_mintime": $safeMs($day.barometer.mintime.raw),
+"trend_code": $baromTrendCode,
+"trend_desc": "$baromTrendDesc"#slurp
+#else
+"current": null
+#end if
+},
+
+"dew": {
+#if $current.dewpoint.has_data
+#set $dewTrendRaw = $trend.dewpoint.format(format_string="%.2f", None_string="0", add_label=False, localize=False)
+#try
+#set $dewTrend = int(float($dewTrendRaw))
+#except
+#set $dewTrend = 0
+#end try
+"current": $current.dewpoint.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"trend": $dewTrend,
+"day_max": $day.dewpoint.max.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"day_maxtime": $safeMs($day.dewpoint.maxtime.raw),
+"day_min": $day.dewpoint.min.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"day_mintime": $safeMs($day.dewpoint.mintime.raw),
+"yesterday_max": $day($days_ago=1).dewpoint.max.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"yesterday_maxtime": $safeMs($day($days_ago=1).dewpoint.maxtime.raw),
+"yesterday_min": $day($days_ago=1).dewpoint.min.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"yesterday_mintime": $safeMs($day($days_ago=1).dewpoint.mintime.raw),
+"month_max": $month.dewpoint.max.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"month_maxtime": $safeMs($month.dewpoint.maxtime.raw),
+"month_min": $month.dewpoint.min.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"month_mintime": $safeMs($month.dewpoint.mintime.raw),
+"year_max": $year.dewpoint.max.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"year_maxtime": $safeMs($year.dewpoint.maxtime.raw),
+"year_min": $year.dewpoint.min.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"year_mintime": $safeMs($year.dewpoint.mintime.raw),
+"alltime_max": $alltime.dewpoint.max.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"alltime_maxtime": $safeMs($alltime.dewpoint.maxtime.raw),
+"alltime_min": $alltime.dewpoint.min.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"alltime_mintime": $safeMs($alltime.dewpoint.mintime.raw)
+#else
+"current": null
+#end if
+},
+
+"et": {
+#if $current.ET.has_data
+"current": $current.ET.format(format_string="%.4f", None_string="null", add_label=False, localize=False),
+"hour": $divumwx_last(3600).ET.sum.format(format_string="%.4f", None_string="null", add_label=False, localize=False),
+"day": $day.ET.sum.format(format_string="%.4f", None_string="null", add_label=False, localize=False),
+"last24h": $divumwx_last(86400).ET.sum.format(format_string="%.4f", None_string="null", add_label=False, localize=False),
+"week": $week.ET.sum.format(format_string="%.4f", None_string="null", add_label=False, localize=False),
+"month": $month.ET.sum.format(format_string="%.4f", None_string="null", add_label=False, localize=False),
+"year": $year.ET.sum.format(format_string="%.4f", None_string="null", add_label=False, localize=False),
+"alltime": $alltime.ET.sum.format(format_string="%.4f", None_string="null", add_label=False, localize=False)
+#else
+"current": null
+#end if
+},
+
+"humid": {
+#if $current.outHumidity.has_data
+#set $humidTrendRaw = $trend.outHumidity.format(format_string="%.2f", None_string="0", add_label=False, localize=False)
+#try
+#set $humidTrend = float($humidTrendRaw)
+#except
+#set $humidTrend = 0
+#end try
+"current": $current.outHumidity.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"trend": $humidTrend,
+"day_max": $day.outHumidity.max.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"day_maxtime": $safeMs($day.outHumidity.maxtime.raw),
+"day_avg": $day.outHumidity.avg.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"day_min": $day.outHumidity.min.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"day_mintime": $safeMs($day.outHumidity.mintime.raw),
+"yesterday_max": $day($days_ago=1).outHumidity.max.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"yesterday_maxtime": $safeMs($day($days_ago=1).outHumidity.maxtime.raw),
+"yesterday_min": $day($days_ago=1).outHumidity.min.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"yesterday_mintime": $safeMs($day($days_ago=1).outHumidity.mintime.raw),
+"month_max": $month.outHumidity.max.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"month_maxtime": $safeMs($month.outHumidity.maxtime.raw),
+"month_min": $month.outHumidity.min.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"month_mintime": $safeMs($month.outHumidity.mintime.raw),
+"year_max": $year.outHumidity.max.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"year_maxtime": $safeMs($year.outHumidity.maxtime.raw),
+"year_min": $year.outHumidity.min.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"year_mintime": $safeMs($year.outHumidity.mintime.raw),
+"alltime_max": $alltime.outHumidity.max.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"alltime_maxtime": $safeMs($alltime.outHumidity.maxtime.raw),
+"alltime_min": $alltime.outHumidity.min.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"alltime_mintime": $safeMs($alltime.outHumidity.mintime.raw),
+"indoors_current": $($current.inHumidity.format(format_string="%.2f", None_string="null", add_label=False, localize=False) if $current.inTemp.has_data else "null"),
+"indoors_day_max": $day.inHumidity.max.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"indoors_day_maxtime": $safeMs($day.inHumidity.maxtime.raw),
+"indoors_day_min": $day.inHumidity.min.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"indoors_day_mintime": $safeMs($day.inHumidity.mintime.raw),
+"indoors_alltime_max": $alltime.inHumidity.max.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"indoors_alltime_maxtime": $safeMs($alltime.inHumidity.maxtime.raw),
+"indoors_alltime_min": $alltime.inHumidity.min.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"indoors_alltime_mintime": $safeMs($alltime.inHumidity.mintime.raw)
+#else
+"current": null
+#end if
+},
+
+"lightning": {
+#if $current.lightning_strike_count.has_data
+"day_strike_count": $day.lightning_strike_count.sum.format(None_string="0", add_label=False, localize=False),
+"hour_strike_count": $hour($hours_ago=1).lightning_strike_count.sum.format(None_string="0", add_label=False, localize=False),
+"current_strike_count": $current.lightning_strike_count.format(None_string="0", add_label=False, localize=False),
+"month_strike_count": $month.lightning_strike_count.sum.format(None_string="0", add_label=False, localize=False),
+"year_strike_count": $year.lightning_strike_count.sum.format(None_string="0", add_label=False, localize=False),
+"alltime_strike_count": $alltime.lightning_strike_count.sum.format(None_string="0", add_label=False, localize=False),
+## last_distance: null until a strike with a distance has been recorded.
+## Formatted without None_string it came out as WeeWX's "   N/A", which
+## isn't valid JSON -- the whole file then failed to parse (lightning card
+## empty, every card shown) on stations that count strikes but have no
+## lightning_distance, e.g. an Ecowitt driver publishing lightning_dist.
+#set $lastStrikeDist = "null"
+#try
+#set $lastStrikeDistObj = $alltime.lightning_distance.lastnonzero
+#if $lastStrikeDistObj.has_data
+#set $lastStrikeDist = $lastStrikeDistObj.format(None_string="null", add_label=False, localize=False)
+#end if
+#except
+#pass
+#end try
+"last_distance": $lastStrikeDist,
+## Fixed this session: the previous version wrote the literal '"last_time":
+## ' text before evaluating $lastStrikeTs -- Cheetah does not buffer or
+## roll back literal output already written when a #try body's expression
+## throws (int(None * 1000) throws TypeError when the station has never
+## recorded lightning), so on failure the output was
+## '"last_time": "last_time": null,' -- a duplicated key, invalid JSON.
+## Same bug class as the one found and fixed in charts_json.tmpl this
+## session. Fixed the same way: compute the raw value into a #set
+## variable first (#set never emits literal output for a failing RHS),
+## then emit the literal "key": value lines unconditionally afterward --
+## reusing safeMs (already used throughout this file for exactly this
+## raw-timestamp-or-null conversion) for last_time, and an inline
+## ternary (fully evaluated before any output is written, so it can't
+## leave a partial literal behind either) for time_ago_seconds.
+## Keyed on lightning_strike_count, not lightning_distance: Ecowitt
+## gateways report lightning_dist as the distance of the *last* strike and
+## repeat it in every loop packet, so with lightning_distance mapped from
+## lightning_dist every archive record has a distance > 0 and the newest
+## one was always the current record -- "Last Detected" showed the current
+## time (issue #67). A strike count > 0 is an actual detection on every
+## driver.
+#set $lastStrikeTs = None
+#try
+#set $lastStrikeTs = $time_at('lightning_strike_count>0').raw
+#except
+#pass
+#end try
+"last_time": $safeMs($lastStrikeTs),
+"time_ago_seconds": $(int(time.time() - $lastStrikeTs) if $lastStrikeTs is not None else "null")
+#else
+"current_strike_count": 0
+#end if
+},
+
+"rain": {
+## exists(), not has_data: has_data is false whenever the latest archive
+## record's rain is None, which is how WeeWX records an interval in which
+## the driver sent no rain value at all (some drivers only send rain while
+## it's raining). With has_data the whole block -- day/month/year totals
+## and the rain event -- disappeared on those stations whenever it was dry.
+## Ecowitt and Davis always send 0, so they never hit this.
+#if $current.rain.exists()
+  "rate": $current.rainRate.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+  "maxRate": $day.rainRate.max.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+  "hour": $divumwx_last(3600).rain.sum.format(format_string="%.2f", None_string="0", add_label=False, localize=False),
+  "last24h": $divumwx_last(86400).rain.sum.format(format_string="%.2f", None_string="0", add_label=False, localize=False),
+  "yesterday": $yesterday.rain.sum.format(format_string="%.2f", None_string="0", add_label=False, localize=False),
+  "day": $day.rain.sum.format(format_string="%.2f", None_string="0", add_label=False, localize=False),
+  "week": $week.rain.sum.format(format_string="%.2f", None_string="0", add_label=False, localize=False),
+  "month": $month.rain.sum.format(format_string="%.2f", None_string="0", add_label=False, localize=False),
+  "year": $year.rain.sum.format(format_string="%.2f", None_string="0", add_label=False, localize=False),
+  #set $storm_start_val = None
+  #set $storm_end_val = None
+  #set $eventRainStr = "0.00"
+  #try
+    ## ------------------------------------------------------------------
+    ## "rainEvent" (aka "stormRain") -- rewritten to the user's own
+    ## continuous-accumulation definition:
+    ##   - starts accumulating as soon as rain is detected;
+    ##   - keeps accumulating while rain continues;
+    ##   - resets to zero once the trailing 1-hour window has under 1mm
+    ##     of rain (effectively "no further rainfall"), or the trailing
+    ##     24-hour window has under 1mm total with a dry final hour --
+    ##     whichever comes first;
+    ##   - a new event then starts tracking from zero once rain resumes.
+    ## This no longer depends on the station/driver's own native
+    ## stormRain or eventRain fields at all -- their reset behaviour is
+    ## opaque and hardware/firmware-specific, and didn't match this
+    ## definition. It's computed instead from the plain 'rain' archive
+    ## column every WeeWX station has, regardless of hardware, which
+    ## also means the old stormRain-vs-eventRain branch (for stations
+    ## exposing one native field or the other) is gone -- one
+    ## calculation now covers both kinds of station.
+    ##
+    ## See divumwx.py's calc_rain_event() section for the full reset-logic
+    ## and its own test suite. This template only does the cheap part:
+    ## $span(...).rain.sum already gives exactly the trailing 1h/24h
+    ## sums the reset condition needs, in mm regardless of the report's
+    ## configured display unit, with no custom code at all -- covering
+    ## "definitely no event right now" (the common case for most
+    ## stations most of the time) without ever touching the archive
+    ## database directly. Only when it's actually mid-event does this
+    ## reach into raw archive history, to pin down exactly when that
+    ## event started.
+    ## ------------------------------------------------------------------
+    #set $trailing1hMm = $divumwx_last(3600).rain.sum.mm.raw
+    #set $trailing24hMm = $divumwx_last(86400).rain.sum.mm.raw
+    #set $trailing1hMm = ($trailing1hMm if $trailing1hMm is not None else 0.0)
+    #set $trailing24hMm = ($trailing24hMm if $trailing24hMm is not None else 0.0)
+    #if $trailing1hMm < 1.0 or $trailing24hMm < 1.0
+      ## No event currently active -- report when the last one ended, if
+      ## one's ever happened. Same $time_since() pattern the old
+      ## stormRain-based code already used, just checking the always-
+      ## present 'rain' type instead of a driver-specific one.
+      #set $eventRainStr = "0.00"
+      #set $lastRainTs = None
+      #try
+        #set $lastRainTs = $time_since('rain>0').raw
+      #except
+        #set $lastRainTs = None
+      #end try
+      #if $lastRainTs is not None
+        #set $storm_end_val = int($lastRainTs * 1000)
+      #end if
+    #else
+      ## Currently mid-event -- the one case that actually needs to walk
+      ## raw archive history to find exactly when it started (see
+      ## divumwx.py's calc_rain_event() docstring for why). Note the
+      ## #import itself runs unconditionally regardless of where it
+      ## sits in this file -- Cheetah hoists every #import to the top of
+      ## the compiled module -- but the actual database scan inside
+      ## calc_rain_event() only ever runs when this branch is reached.
+      #import user.divumwx
+      #set $eventMm, $eventStartTs, $_unusedEndTs = $user.divumwx.calc_rain_event($db_lookup(), $current.dateTime.raw)
+      #if $eventStartTs is not None
+        #set $storm_start_val = int($eventStartTs * 1000)
+      #end if
+      #set $eventMmConverted = $weewx.units.convert(($eventMm, 'mm', 'group_rain'), $unit.unit_type.rain)[0]
+      #set $eventRainStr = ("%.2f" % $eventMmConverted if $eventMmConverted is not None else "0.00")
+    #end if
+  #except
+    #set $storm_start_val = None
+    #set $storm_end_val = None
+    #set $eventRainStr = "0.00"
+  #end try
+  "event": $eventRainStr,
+  "storm_start":
+  #if $storm_start_val is not None
+    $storm_start_val,
+  #else
+    null,
+  #end if
+  "storm_end":
+  #if $storm_end_val is not None
+    $storm_end_val
+  #else
+    null
+  #end if
+#else
+  "rate": null
+#end if
+},
+
+#if $current.hail.has_data
+"p_rain": {
+"rate": $current.hailRate.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"hour": $divumwx_last(3600).hail.sum.format(format_string="%.2f", None_string="0", add_label=False, localize=False),
+"last24h": $divumwx_last(86400).hail.sum.format(format_string="%.2f", None_string="0", add_label=False, localize=False),
+"yesterday": $yesterday.hail.sum.format(format_string="%.2f", None_string="0", add_label=False, localize=False),
+"day": $day.hail.sum.format(format_string="%.2f", None_string="0", add_label=False, localize=False),
+"week": $week.hail.sum.format(format_string="%.2f", None_string="0", add_label=False, localize=False),
+"month": $month.hail.sum.format(format_string="%.2f", None_string="0", add_label=False, localize=False),
+"year": $year.hail.sum.format(format_string="%.2f", None_string="0", add_label=False, localize=False),
+#set $p_storm_start_val = None
+#set $p_storm_end_val = None
+#set $eventRainPiezoStr = "0.00"
+#try
+  ## Same continuous-accumulation rewrite as the main "rain" block above,
+  ## applied to the piezo gauge -- replaces the native erain_piezo
+  ## accumulator (a hardware/firmware-defined counter, structurally the
+  ## same kind of opaque-reset field stormRain/eventRain were for the
+  ## main gauge) with calc_rain_event() reading obs_type='hail', which is
+  ## where this deployment's piezo readings already live for the rate/
+  ## sum fields just above (see divumwx.py's calc_rain_event() docstring
+  ## for the full "why 'hail'" explanation). Same fast-path-first
+  ## structure too: the cheap $span(...).hail.sum.mm checks cover "no
+  ## piezo event right now" without ever touching the archive database.
+  #set $pTrailing1hMm = $divumwx_last(3600).hail.sum.mm.raw
+  #set $pTrailing24hMm = $divumwx_last(86400).hail.sum.mm.raw
+  #set $pTrailing1hMm = ($pTrailing1hMm if $pTrailing1hMm is not None else 0.0)
+  #set $pTrailing24hMm = ($pTrailing24hMm if $pTrailing24hMm is not None else 0.0)
+  #if $pTrailing1hMm < 1.0 or $pTrailing24hMm < 1.0
+    #set $eventRainPiezoStr = "0.00"
+    #set $pLastRainTs = None
+    #try
+      #set $pLastRainTs = $time_since('hail>0').raw
+    #except
+      #set $pLastRainTs = None
+    #end try
+    #if $pLastRainTs is not None
+      #set $p_storm_end_val = int($pLastRainTs * 1000)
+    #end if
+  #else
+    #import user.divumwx
+    #set $pEventMm, $pEventStartTs, $_pUnusedEndTs = $user.divumwx.calc_rain_event($db_lookup(), $current.dateTime.raw, 'hail')
+    #if $pEventStartTs is not None
+      #set $p_storm_start_val = int($pEventStartTs * 1000)
+    #end if
+    #set $pEventMmConverted = $weewx.units.convert(($pEventMm, 'mm', 'group_rain'), $unit.unit_type.rain)[0]
+    #set $eventRainPiezoStr = ("%.2f" % $pEventMmConverted if $pEventMmConverted is not None else "0.00")
+  #end if
+#except
+  #set $p_storm_start_val = None
+  #set $p_storm_end_val = None
+  #set $eventRainPiezoStr = "0.00"
+#end try
+"event": $eventRainPiezoStr,
+"storm_start":
+#if $p_storm_start_val is not None
+  $p_storm_start_val,
+#else
+  null,
+#end if
+"storm_end":
+#if $p_storm_end_val is not None
+  $p_storm_end_val
+#else
+  null
+#end if
+},
+#end if
+
+"sky": {
+#set $skyCloudBaseObj = None
+#try
+#set $skyCloudBaseObj = $current.cloudbase
+#except
+#pass
+#end try
+#if $skyCloudBaseObj is None or not $skyCloudBaseObj.has_data
+#try
+#set $skyCloudBaseExtras = $current(data_binding='divumwx_extras_binding').cloudbase
+#if $skyCloudBaseExtras.has_data
+#set $skyCloudBaseObj = $skyCloudBaseExtras
+#end if
+#except
+#pass
+#end try
+#end if
+## DivumWX's own extras database first; WeeWX's main archive only as a
+## fallback (DivumWX no longer keeps its fields there).
+#set $skyCloudCoverObj = None
+#try
+#set $skyCloudCoverExtras = $current(data_binding='divumwx_extras_binding').cloudcover
+#if $skyCloudCoverExtras.has_data
+#set $skyCloudCoverObj = $skyCloudCoverExtras
+#end if
+#except
+#pass
+#end try
+## Only taken if it has data: an obs type the main archive doesn't know
+## doesn't raise here, it prints #errorCatcher's ?'name'? placeholder
+## later, which makes the whole file invalid JSON (and the dashboard then
+## shows every card, because it can't read meta.enabled_cards).
+#if $skyCloudCoverObj is None
+#try
+#set $skyCloudCoverMain = $current.cloudcover
+#if $skyCloudCoverMain.has_data
+#set $skyCloudCoverObj = $skyCloudCoverMain
+#end if
+#except
+#pass
+#end try
+#end if
+#if $skyCloudBaseObj is not None
+"cloud_base": $skyCloudBaseObj.format(format_string="%.0f", None_string="null", add_label=False, localize=False),
+#else
+"cloud_base": null,
+#end if
+#if $skyCloudCoverObj is not None
+"cloud_cover": $skyCloudCoverObj.format(format_string="%.0f", None_string="0", add_label=False, localize=False)
+#else
+"cloud_cover": 0
+#end if
+},
+
+"solar": {
+#if $current.radiation.has_data
+"current": $current.radiation.format(format_string="%.1f", None_string="null", add_label=False, localize=False),
+"day_max": $day.radiation.max.format(format_string="%.1f", None_string="null", add_label=False, localize=False),
+"day_maxtime": $safeMs($day.radiation.maxtime.raw),
+#if $day($days_ago=1).radiation.has_data
+"yesterday_max": $day($days_ago=1).radiation.max.format(format_string="%.1f", None_string="null", add_label=False, localize=False),
+"yesterday_maxtime": $safeMs($day($days_ago=1).radiation.maxtime.raw),
+#end if
+"month_max": $month.radiation.max.format(format_string="%.1f", None_string="null", add_label=False, localize=False),
+"month_maxtime": $safeMs($month.radiation.maxtime.raw),
+"year_max": $year.radiation.max.format(format_string="%.1f", None_string="null", add_label=False, localize=False),
+"year_maxtime": $safeMs($year.radiation.maxtime.raw),
+"alltime_max": $alltime.radiation.max.format(format_string="%.1f", None_string="null", add_label=False, localize=False),
+"alltime_maxtime": $safeMs($alltime.radiation.maxtime.raw),
+"lux": $current.luminosity.format(format_string="%.1f", None_string="null", add_label=False, localize=False),
+"day_lux_max": $day.luminosity.max.format(format_string="%.1f", None_string="null", add_label=False, localize=False),
+"day_lux_maxtime": $safeMs($day.luminosity.maxtime.raw),
+## DivumWX's own extras database first; WeeWX's main archive only as a
+## fallback (DivumWX no longer keeps its fields there).
+#set $solarThresholdObj = None
+#try
+#set $solarThresholdExtras = $current(data_binding='divumwx_extras_binding').threshold
+#if $solarThresholdExtras.has_data
+#set $solarThresholdObj = $solarThresholdExtras
+#end if
+#except
+#pass
+#end try
+## Only taken if it has data: an obs type the main archive doesn't know
+## doesn't raise here, it prints #errorCatcher's ?'name'? placeholder
+## later, which makes the whole file invalid JSON (and the dashboard then
+## shows every card, because it can't read meta.enabled_cards).
+#if $solarThresholdObj is None
+#try
+#set $solarThresholdMain = $current.threshold
+#if $solarThresholdMain.has_data
+#set $solarThresholdObj = $solarThresholdMain
+#end if
+#except
+#pass
+#end try
+#end if
+#set $solarSunDurationRaw = None
+#try
+#set $solarSunDurationRaw = $day(data_binding='divumwx_extras_binding').sunshine_time.sum.raw
+#except
+#pass
+#end try
+#if $solarSunDurationRaw is None
+#try
+#set $solarSunDurationRaw = $day.sunshine_time.sum.raw
+#except
+#pass
+#end try
+#end if
+#set $solarSunshineYestRaw = None
+#try
+#set $solarSunshineYestRaw = $yesterday(data_binding='divumwx_extras_binding').sunshine_time.sum.raw
+#except
+#pass
+#end try
+#if $solarSunshineYestRaw is None
+#try
+#set $solarSunshineYestRaw = $yesterday.sunshine_time.sum.raw
+#except
+#pass
+#end try
+#end if
+#if $solarThresholdObj is not None
+"threshold": $solarThresholdObj.format(format_string="%.1f", None_string="null", add_label=False, localize=False),
+#else
+"threshold": null,
+#end if
+"sun_duration_minutes": $(("%.1f" % $solarSunDurationRaw) if $solarSunDurationRaw is not None else "0"),
+"sunshine_minutes_yesterday": $(float($solarSunshineYestRaw or 0) * 60)
+#else
+"current": null
+#end if
+},
+
+"temp": {
+#if $current.inTemp.has_data
+"indoor_current": $current.inTemp.format(format_string="%.1f", None_string="null", add_label=False, localize=False),
+#set $indoorTrendRaw = $trend.inTemp.format(format_string="%.1f", None_string="0", add_label=False, localize=False)
+#try
+#set $indoorTrend = float($indoorTrendRaw)
+#except
+#set $indoorTrend = 0
+#end try
+"indoor_trend": $indoorTrend,
+"indoor_day_max": $day.inTemp.max.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"indoor_day_min": $day.inTemp.min.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+## Indoor "feels like" — NWS heat-index formula, same as the original PHP,
+## just translated to Cheetah's embedded Python rather than re-derived.
+#set $indoorTC = float($current.inTemp.raw or 0)
+#set $indoorRH = float($current.inHumidity.raw or 0)
+#set $indoorTF = $indoorTC * 9.0/5.0 + 32.0
+#if $indoorTF <= 40.0
+#set $indoorHI = $indoorTF
+#elif $indoorTF < 80.0
+## The original PHP used this simpler approximation for the whole
+## 40-80°F band rather than the Rothfusz regression below — and since
+## indoor temperatures are almost always in this range, this branch
+## covers the overwhelming majority of real readings, not an edge case.
+#set $indoorHI = 0.5*($indoorTF+61.0+(($indoorTF-68.0)*1.2)+($indoorRH*0.094))
+#else
+#set $indoorHI = -42.379 + (2.04901523*$indoorTF) + (10.14333127*$indoorRH) - (0.22475541*$indoorTF*$indoorRH) - (0.00683783*$indoorTF*$indoorTF) - (0.05481717*$indoorRH*$indoorRH) + (0.00122874*$indoorTF*$indoorTF*$indoorRH) + (0.00085282*$indoorTF*$indoorRH*$indoorRH) - (0.00000199*$indoorTF*$indoorTF*$indoorRH*$indoorRH)
+#if $indoorRH < 13 and $indoorTF <= 112
+#set $indoorHI = $indoorHI - (((13-$indoorRH)/4.0) * math.sqrt(17 - abs($indoorTF-95)/17.0))
+#elif $indoorRH > 85 and $indoorTF <= 87
+#set $indoorHI = $indoorHI + ((($indoorRH-85)/10.0) * ((87-$indoorTF)/5.0))
+#end if
+#end if
+"indoor_feels_like_f": $(round($indoorHI, 1)),
+"indoor_feels_like_c": $(round(($indoorHI - 32.0) * 5.0/9.0, 1))
+#else
+"indoor_current": null
+#end if
+,
+#if $current.outTemp.has_data
+#set $outTempTrendRaw = $trend.outTemp.format(format_string="%.1f", None_string="0", add_label=False, localize=False)
+#try
+#set $outTempTrend = float($outTempTrendRaw)
+#except
+#set $outTempTrend = 0
+#end try
+"outside_current": $current.outTemp.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"outside_trend": $outTempTrend,
+"feels_like": $current.appTemp.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"heat_index": $current.heatindex.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"wind_chill": $current.windchill.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"humidex": $current.humidex.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"day_avg": $day.outTemp.avg.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"day_avg_last_hour": $divumwx_last(3600).outTemp.avg.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"day_max": $day.outTemp.max.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"day_maxtime": $safeMs($day.outTemp.maxtime.raw),
+"day_min": $day.outTemp.min.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"day_mintime": $safeMs($day.outTemp.mintime.raw),
+"yesterday_max": $day($days_ago=1).outTemp.max.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"yesterday_maxtime": $safeMs($day($days_ago=1).outTemp.maxtime.raw),
+"yesterday_min": $day($days_ago=1).outTemp.min.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"yesterday_mintime": $safeMs($day($days_ago=1).outTemp.mintime.raw),
+"month_max": $month.outTemp.max.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"month_maxtime": $safeMs($month.outTemp.maxtime.raw),
+"month_min": $month.outTemp.min.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"month_mintime": $safeMs($month.outTemp.mintime.raw),
+"year_max": $year.outTemp.max.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"year_maxtime": $safeMs($year.outTemp.maxtime.raw),
+"year_min": $year.outTemp.min.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"year_mintime": $safeMs($year.outTemp.mintime.raw),
+"alltime_max": $alltime.outTemp.max.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"alltime_maxtime": $safeMs($alltime.outTemp.maxtime.raw),
+"alltime_min": $alltime.outTemp.min.format(format_string="%.2f", None_string="null", add_label=False, localize=False),
+"alltime_mintime": $safeMs($alltime.outTemp.mintime.raw),
+"heat_index_avg_3h": $hour($hours_ago=3).heatindex.avg.format(format_string="%.1f", None_string="null", add_label=False, localize=False),
+"feels_like_avg_3h": $hour($hours_ago=3).appTemp.avg.format(format_string="%.1f", None_string="null", add_label=False, localize=False),
+"wind_chill_avg_3h": $hour($hours_ago=3).windchill.avg.format(format_string="%.1f", None_string="null", add_label=False, localize=False),
+"outside_avg_3h": $hour($hours_ago=3).outTemp.avg.format(format_string="%.1f", None_string="null", add_label=False, localize=False)
+#else
+"outside_current": null
+#end if
+},
+
+"uv": {
+#if $current.UV.has_data
+"current": $current.UV.format(format_string="%.1f", None_string="null", add_label=False, localize=False),
+"day_max": $day.UV.max.format(format_string="%.1f", None_string="null", add_label=False, localize=False),
+"day_maxtime": $safeMs($day.UV.maxtime.raw),
+"yesterday_max": $day($days_ago=1).UV.max.format(format_string="%.1f", None_string="null", add_label=False, localize=False),
+"yesterday_maxtime": $safeMs($day($days_ago=1).UV.maxtime.raw),
+"month_max": $month.UV.max.format(format_string="%.1f", None_string="null", add_label=False, localize=False),
+"month_maxtime": $safeMs($month.UV.maxtime.raw),
+"year_max": $year.UV.max.format(format_string="%.1f", None_string="null", add_label=False, localize=False),
+"year_maxtime": $safeMs($year.UV.maxtime.raw),
+"alltime_max": $alltime.UV.max.format(format_string="%.1f", None_string="null", add_label=False, localize=False),
+"alltime_maxtime": $safeMs($alltime.UV.maxtime.raw)
+#else
+"current": null
+#end if
+},
+
+"vpd": {
+## DivumWX's own extras database first; WeeWX's main archive only as a
+## fallback (DivumWX no longer keeps its fields there).
+#set $vpdObj = None
+#set $vpdUseExtras = False
+#try
+#set $vpdExtrasObj = $current(data_binding='divumwx_extras_binding').vpd
+#if $vpdExtrasObj.has_data
+#set $vpdObj = $vpdExtrasObj
+#set $vpdUseExtras = True
+#end if
+#except
+#pass
+#end try
+#if $vpdObj is None
+#try
+#set $vpdObj = $current.vpd
+#except
+#pass
+#end try
+#end if
+#if $vpdObj is not None and $vpdObj.has_data
+#set $vpdDayMaxObj = None
+#set $vpdDayMinObj = None
+#set $vpdDayAvgObj = None
+#set $vpdDayMaxTimeObj = None
+#set $vpdDayMinTimeObj = None
+#set $vpdMonthMaxObj = None
+#set $vpdMonthMinObj = None
+#set $vpdMonthAvgObj = None
+#set $vpdYearMaxObj = None
+#set $vpdYearMinObj = None
+#set $vpdYearAvgObj = None
+#try
+#if $vpdUseExtras
+#set $vpdDayMaxObj = $day(data_binding='divumwx_extras_binding').vpd.max
+#set $vpdDayMinObj = $day(data_binding='divumwx_extras_binding').vpd.min
+#set $vpdDayAvgObj = $day(data_binding='divumwx_extras_binding').vpd.avg
+#set $vpdDayMaxTimeObj = $day(data_binding='divumwx_extras_binding').vpd.maxtime
+#set $vpdDayMinTimeObj = $day(data_binding='divumwx_extras_binding').vpd.mintime
+#set $vpdMonthMaxObj = $month(data_binding='divumwx_extras_binding').vpd.max
+#set $vpdMonthMinObj = $month(data_binding='divumwx_extras_binding').vpd.min
+#set $vpdMonthAvgObj = $month(data_binding='divumwx_extras_binding').vpd.avg
+#set $vpdYearMaxObj = $year(data_binding='divumwx_extras_binding').vpd.max
+#set $vpdYearMinObj = $year(data_binding='divumwx_extras_binding').vpd.min
+#set $vpdYearAvgObj = $year(data_binding='divumwx_extras_binding').vpd.avg
+#else
+#set $vpdDayMaxObj = $day.vpd.max
+#set $vpdDayMinObj = $day.vpd.min
+#set $vpdDayAvgObj = $day.vpd.avg
+#set $vpdDayMaxTimeObj = $day.vpd.maxtime
+#set $vpdDayMinTimeObj = $day.vpd.mintime
+#set $vpdMonthMaxObj = $month.vpd.max
+#set $vpdMonthMinObj = $month.vpd.min
+#set $vpdMonthAvgObj = $month.vpd.avg
+#set $vpdYearMaxObj = $year.vpd.max
+#set $vpdYearMinObj = $year.vpd.min
+#set $vpdYearAvgObj = $year.vpd.avg
+#end if
+#except
+#pass
+#end try
+"current": $vpdObj.kPa.format(format_string="%.4f", None_string="0", add_label=False, localize=False),
+#if $vpdDayMaxObj is not None
+"day_max": $vpdDayMaxObj.kPa.format(format_string="%.4f", None_string="null", add_label=False, localize=False),
+#else
+"day_max": null,
+#end if
+#if $vpdDayMinObj is not None
+"day_min": $vpdDayMinObj.kPa.format(format_string="%.4f", None_string="null", add_label=False, localize=False),
+#else
+"day_min": null,
+#end if
+#if $vpdDayAvgObj is not None
+"day_avg": $vpdDayAvgObj.kPa.format(format_string="%.4f", None_string="null", add_label=False, localize=False),
+#else
+"day_avg": null,
+#end if
+#if $vpdDayMaxTimeObj is not None
+"day_maxtime": $safeMs($vpdDayMaxTimeObj.raw),
+#else
+"day_maxtime": null,
+#end if
+#if $vpdDayMinTimeObj is not None
+"day_mintime": $safeMs($vpdDayMinTimeObj.raw),
+#else
+"day_mintime": null,
+#end if
+#if $vpdMonthMaxObj is not None
+"month_max": $vpdMonthMaxObj.kPa.format(format_string="%.4f", None_string="null", add_label=False, localize=False),
+#else
+"month_max": null,
+#end if
+#if $vpdMonthMinObj is not None
+"month_min": $vpdMonthMinObj.kPa.format(format_string="%.4f", None_string="null", add_label=False, localize=False),
+#else
+"month_min": null,
+#end if
+#if $vpdMonthAvgObj is not None
+"month_avg": $vpdMonthAvgObj.kPa.format(format_string="%.4f", None_string="null", add_label=False, localize=False),
+#else
+"month_avg": null,
+#end if
+#if $vpdYearMaxObj is not None
+"year_max": $vpdYearMaxObj.kPa.format(format_string="%.4f", None_string="null", add_label=False, localize=False),
+#else
+"year_max": null,
+#end if
+#if $vpdYearMinObj is not None
+"year_min": $vpdYearMinObj.kPa.format(format_string="%.4f", None_string="null", add_label=False, localize=False),
+#else
+"year_min": null,
+#end if
+#if $vpdYearAvgObj is not None
+"year_avg": $vpdYearAvgObj.kPa.format(format_string="%.4f", None_string="null", add_label=False, localize=False)
+#else
+"year_avg": null
+#end if
+#else
+"current": null
+#end if
+},
+
+"wind": {
+#if $current.windSpeed.has_data and $current.windGust.has_data
+"direction": $current.windDir.format(format_string="%.0f", None_string="null", add_label=False, localize=False),
+"direction_10m_avg": $divumwx_last(600).windDir.avg.format(format_string="%.0f", None_string="null", add_label=False, localize=False),
+"speed": $current.windSpeed.format(format_string="%.1f", None_string="null", add_label=False, localize=False),
+"gust": $current.windGust.format(format_string="%.1f", None_string="null", add_label=False, localize=False),
+"speed_avg": $day.windSpeed.avg.format(format_string="%.1f", None_string="null", add_label=False, localize=False),
+"speed_max": $day.windSpeed.max.format(format_string="%.1f", None_string="null", add_label=False, localize=False),
+"speed_maxtime": $safeMs($day.windSpeed.maxtime.raw),
+"gust_max": $day.windGust.max.format(format_string="%.1f", None_string="null", add_label=False, localize=False),
+"gust_maxtime": $safeMs($day.windGust.maxtime.raw),
+## Wind run — WeeWX's own running total, in the report's distance unit
+## (no more reconstructing it client-side from hourly-max samples).
+"wind_run": $day.windrun.sum.format(format_string="%.1f", None_string="null", add_label=False, localize=False),
+"speed_10m_avg": $divumwx_last(600).windSpeed.avg.format(format_string="%.1f", None_string="null", add_label=False, localize=False),
+"speed_10m_max": $divumwx_last(600).windSpeed.max.format(format_string="%.1f", None_string="null", add_label=False, localize=False),
+"gust_10m_max": $divumwx_last(600).windGust.max.format(format_string="%.1f", None_string="null", add_label=False, localize=False),
+"speed_yesterday_max": $day($days_ago=1).windSpeed.max.format(format_string="%.1f", None_string="null", add_label=False, localize=False),
+"speed_yesterday_maxtime": $safeMs($day($days_ago=1).windSpeed.maxtime.raw),
+"gust_yesterday_max": $day($days_ago=1).windGust.max.format(format_string="%.1f", None_string="null", add_label=False, localize=False),
+"gust_yesterday_maxtime": $safeMs($day($days_ago=1).windGust.maxtime.raw),
+"speed_month_max": $month.windSpeed.max.format(format_string="%.1f", None_string="null", add_label=False, localize=False),
+"speed_month_maxtime": $safeMs($month.windSpeed.maxtime.raw),
+"gust_month_max": $month.windGust.max.format(format_string="%.1f", None_string="null", add_label=False, localize=False),
+"gust_month_maxtime": $safeMs($month.windGust.maxtime.raw),
+"speed_year_max": $year.windSpeed.max.format(format_string="%.1f", None_string="null", add_label=False, localize=False),
+"speed_year_maxtime": $safeMs($year.windSpeed.maxtime.raw),
+"gust_year_max": $year.windGust.max.format(format_string="%.1f", None_string="null", add_label=False, localize=False),
+"gust_year_maxtime": $safeMs($year.windGust.maxtime.raw),
+"speed_alltime_max": $alltime.windSpeed.max.format(format_string="%.1f", None_string="null", add_label=False, localize=False),
+"speed_alltime_maxtime": $safeMs($alltime.windSpeed.maxtime.raw),
+"gust_alltime_max": $alltime.windGust.max.format(format_string="%.1f", None_string="null", add_label=False, localize=False),
+"gust_alltime_maxtime": $safeMs($alltime.windGust.maxtime.raw)
+#else
+"speed": null
+#end if
+}
+}
